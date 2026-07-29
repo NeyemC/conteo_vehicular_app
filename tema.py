@@ -46,6 +46,27 @@ COLOR_SENTIDO = {
     "Derecha":   "#8FD6FF",
 }
 
+# ── Medidas de la grilla ────────────────────────────────────────────────────
+# La posición 5 dibuja la grilla dos veces, una por sentido, así que con las
+# medidas amplias no cabe en pantalla. En las posiciones 1-4 hay un solo bloque
+# y sobra espacio, así que ahí los botones van más grandes y se tocan mejor.
+MEDIDAS = {
+    "amplio": {
+        "icono": 27, "cuenta": 24, "etiqueta": 11, "titulo": 14,
+        "pad_arriba": 12, "pad_abajo": 10, "sep_interno": 3,
+        "radio": 12, "sep_botones": 7, "sep_bloques": 8,
+    },
+    "compacto": {
+        "icono": 20, "cuenta": 18, "etiqueta": 10, "titulo": 12,
+        "pad_arriba": 7, "pad_abajo": 5, "sep_interno": 1,
+        "radio": 10, "sep_botones": 5, "sep_bloques": 5,
+    },
+}
+
+
+def medidas(compacto: bool) -> dict:
+    return MEDIDAS["compacto" if compacto else "amplio"]
+
 
 def con_alfa(hex_color: str, alfa: float) -> str:
     """

@@ -30,7 +30,7 @@ ICONO_TIPO = {
     "bus":         ft.Icons.DIRECTIONS_BUS,
     "camion":      ft.Icons.LOCAL_SHIPPING,
     "moto":        ft.Icons.TWO_WHEELER,
-    "trolly":      ft.Icons.LUGGAGE,
+    "trolley":     ft.Icons.LUGGAGE,
 }
 
 ICONO_SENTIDO = {"Izquierda": ft.Icons.ARROW_BACK, "Derecha": ft.Icons.ARROW_FORWARD}
@@ -269,10 +269,40 @@ async def _app(page: ft.Page):
         w_total = ft.Text("0", size=28, weight=ft.FontWeight.BOLD, color=T.PRIMARIO)
         w_sentido: dict[str, ft.Text] = {}
         w_ultimo = ft.Text("Sin registros", size=12, color=T.TEXTO_3)
+        w_estado_csv = ft.Text("", size=10, color=T.ERROR, visible=False)
         btn_deshacer = ft.TextButton(
             "Deshacer", icon=ft.Icons.UNDO,
             style=ft.ButtonStyle(color=T.SALIDA),
             disabled=True)
+        btn_exportar = ft.FilledButton(
+            "Exportar registros", icon=ft.Icons.CLOUD_UPLOAD, expand=True,
+            style=ft.ButtonStyle(
+                bgcolor=T.PRIMARIO, color=T.TEXTO_SOBRE_ACENTO,
+                padding=ft.Padding(12, 14, 12, 14),
+                shape=ft.RoundedRectangleBorder(radius=10)))
+
+        # ── aviso no bloqueante ───────────────────────────────────────────
+        # Un diálogo modal en cada registro obligaría a cerrarlo antes del
+        # siguiente toque, y en terreno se cuentan varios vehículos por segundo.
+        # El SnackBar confirma y desaparece solo.
+        def avisar(mensaje: str, color: str):
+            page.show_dialog(ft.SnackBar(
+                content=ft.Text(mensaje, size=13, color=T.TEXTO_SOBRE_ACENTO,
+                                weight=ft.FontWeight.W_500),
+                bgcolor=color,
+                duration=1100))
+
+        # ── CSV siempre al día ────────────────────────────────────────────
+        # Se reescribe en cada registro (unos 20 ms con 2000 filas), así la
+        # jornada se puede recuperar sin abrir la app y sin depender de que
+        # alguien acuerde exportar.
+        def escribir_csv():
+            try:
+                exportar_csv(s)
+                w_estado_csv.visible = False
+            except Exception as ex:
+                w_estado_csv.value = f"No se pudo escribir el CSV: {ex}"
+                w_estado_csv.visible = True
 
         # ── refresco de contadores ────────────────────────────────────────
         def actualizar():
@@ -291,9 +321,11 @@ async def _app(page: ft.Page):
             page.update()
 
         def registrar(tipo: str, grupo: str, sent: str):
-            s.agregar_vehiculo(tipo, grupo, sent)
-            guardar(s)
+            v = s.agregar_vehiculo(tipo, grupo, sent)
+            guardar(s)              # JSON: permite reanudar la sesión
+            escribir_csv()          # CSV: legible sin la app, siempre al día
             actualizar()
+            avisar(f"Caso registrado · {v.descripcion()}", T.ENTRADA)
 
         def handler_boton(tipo: str, grupo: str, sent: str):
             async def _h(e):
@@ -304,65 +336,69 @@ async def _app(page: ft.Page):
             v = s.deshacer()
             if v is not None:
                 guardar(s)
+                escribir_csv()
                 actualizar()
+                avisar(f"Registro anulado · {v.descripcion()}", T.SALIDA)
 
         btn_deshacer.on_click = on_deshacer
 
-        # ── un botón de la grilla ─────────────────────────────────────────
-        def boton(grupo: str, tipo: str, sent: str, ancho: bool) -> ft.Container:
-            color = T.COLOR_EJES[grupo]
-            w = ft.Text("0", size=19, weight=ft.FontWeight.BOLD, color=color)
-            w_cuenta[(grupo, tipo, sent)] = w
+        # La posición 5 dibuja la grilla dos veces y con las medidas amplias no
+        # cabe en pantalla; en las posiciones 1-4 sobra espacio y los botones
+        # van más grandes, que se tocan mejor en terreno.
+        M = T.medidas(s.dos_sentidos())
 
-            contenido = [
-                ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=5,
-                       controls=[
-                           ft.Icon(ICONO_TIPO[tipo], size=15, color=T.TEXTO_2),
-                           ft.Text(etiqueta_tipo(tipo), size=12,
-                                   weight=ft.FontWeight.W_500, color=T.TEXTO,
-                                   text_align=ft.TextAlign.CENTER),
-                       ]),
-                w,
-            ]
+        # ── un botón de la grilla ─────────────────────────────────────────
+        def boton(grupo: str, tipo: str, sent: str) -> ft.Container:
+            color = T.COLOR_EJES[grupo]
+            w = ft.Text("0", size=M["cuenta"], weight=ft.FontWeight.BOLD,
+                        color=color)
+            w_cuenta[(grupo, tipo, sent)] = w
+            # Icono arriba, etiqueta, y el conteo destacado abajo: en terreno se
+            # toca sin mirar mucho, y el número confirma que quedó registrado.
             return ft.Container(
                 on_click=handler_boton(tipo, grupo, sent),
-                expand=True if not ancho else None,
+                expand=True,
                 bgcolor=T.SUPERFICIE_2,
-                border_radius=10,
+                border_radius=M["radio"],
                 border=_borde(1, T.con_alfa(color, 0.45)),
-                padding=ft.Padding(6, 10, 6, 8),
+                padding=ft.Padding(4, M["pad_arriba"], 4, M["pad_abajo"]),
                 content=ft.Column(
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    spacing=2, tight=True, controls=contenido),
+                    spacing=M["sep_interno"], tight=True, controls=[
+                        ft.Icon(ICONO_TIPO[tipo], size=M["icono"], color=color),
+                        ft.Text(etiqueta_tipo(tipo), size=M["etiqueta"],
+                                weight=ft.FontWeight.W_500, color=T.TEXTO,
+                                text_align=ft.TextAlign.CENTER),
+                        w,
+                    ]),
             )
 
         # ── un bloque de grupo de ejes ────────────────────────────────────
         def bloque_grupo(grupo: str, sent: str) -> list:
-            etiqueta, en_fila, anchos = GRUPOS_EJES[grupo]
+            etiqueta, tipos = GRUPOS_EJES[grupo]
             color = T.COLOR_EJES[grupo]
-            filas = [
-                ft.Text(etiqueta, size=14, weight=ft.FontWeight.W_600,
+            return [
+                ft.Text(etiqueta, size=M["titulo"], weight=ft.FontWeight.W_600,
                         color=color),
-                ft.Row(spacing=8, controls=[boton(grupo, t, sent, False)
-                                            for t in en_fila]),
+                ft.Row(spacing=M["sep_botones"],
+                       controls=[boton(grupo, x, sent) for x in tipos]),
             ]
-            for t in anchos:
-                filas.append(ft.Row(controls=[boton(grupo, t, sent, False)]))
-            return filas
 
         # ── la grilla de un sentido ───────────────────────────────────────
         def grilla(sent: str) -> ft.Container:
             hijos = []
             if sent:
                 color = T.COLOR_SENTIDO[sent]
-                w = ft.Text("0", size=14, weight=ft.FontWeight.BOLD, color=color)
+                w = ft.Text("0", size=M["titulo"], weight=ft.FontWeight.BOLD,
+                            color=color)
                 w_sentido[sent] = w
                 hijos.append(ft.Container(
                     bgcolor=T.con_alfa(color, 0.18), border_radius=8,
-                    padding=ft.Padding(10, 6, 10, 6),
+                    padding=ft.Padding(10, 4, 10, 4),
                     content=ft.Row(spacing=8, controls=[
-                        ft.Icon(ICONO_SENTIDO[sent], size=20, color=color),
-                        ft.Text(sent, size=14, weight=ft.FontWeight.BOLD,
+                        ft.Icon(ICONO_SENTIDO[sent], size=M["icono"] - 2,
+                                color=color),
+                        ft.Text(sent, size=M["titulo"], weight=ft.FontWeight.BOLD,
                                 color=color, expand=True),
                         w,
                     ])))
@@ -370,7 +406,7 @@ async def _app(page: ft.Page):
             for grupo in GRUPOS_EJES:
                 hijos.extend(bloque_grupo(grupo, sent))
             return ft.Container(
-                content=ft.Column(spacing=8, controls=hijos))
+                content=ft.Column(spacing=M["sep_bloques"], controls=hijos))
 
         # ── encabezado ────────────────────────────────────────────────────
         encabezado = ft.Container(
@@ -390,10 +426,6 @@ async def _app(page: ft.Page):
                     ]),
                     ft.Row(spacing=0, controls=[
                         w_total,
-                        ft.IconButton(icon=ft.Icons.DOWNLOAD,
-                                      icon_color=T.PRIMARIO,
-                                      tooltip="Exportar CSV",
-                                      on_click=accion_exportar),
                         ft.IconButton(icon=ft.Icons.INFO_OUTLINE,
                                       icon_color=T.PRIMARIO,
                                       tooltip="Resumen",
@@ -402,29 +434,38 @@ async def _app(page: ft.Page):
                 ]),
         )
 
-        # ── barra inferior: último registro y deshacer ─────────────────────
+        # ── barra inferior: último registro, deshacer y exportar ───────────
+        # Exportar es un botón con texto, no un icono en el encabezado: es la
+        # acción que manda los datos a la planilla y tiene que ser evidente.
+        btn_exportar.on_click = accion_exportar
         barra = ft.Container(
             bgcolor=T.SUPERFICIE,
             border=ft.Border(top=ft.BorderSide(1, T.BORDE_SUAVE)),
-            padding=ft.Padding(14, 6, 6, 6),
-            content=ft.Row(
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                controls=[
-                    ft.Column(spacing=0, expand=True, controls=[
-                        ft.Text("Último", size=10, color=T.TEXTO_3),
-                        w_ultimo,
+            padding=ft.Padding(12, 6, 12, 8),
+            content=ft.Column(spacing=6, controls=[
+                ft.Row(
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    controls=[
+                        ft.Column(spacing=0, expand=True, controls=[
+                            ft.Text("Último", size=10, color=T.TEXTO_3),
+                            w_ultimo,
+                            w_estado_csv,
+                        ]),
+                        btn_deshacer,
                     ]),
-                    btn_deshacer,
-                ]),
+                btn_exportar,
+            ]),
         )
 
         # ── armado ────────────────────────────────────────────────────────
         grillas = []
         for i, sent in enumerate(s.sentidos()):
             if i:
-                grillas.append(ft.Divider(height=18, color=T.BORDE_SUAVE))
+                grillas.append(ft.Divider(height=M["sep_bloques"] + 2,
+                                          color=T.BORDE_SUAVE))
             grillas.append(grilla(sent))
 
+        pad = 8 if s.dos_sentidos() else 12
         page.floating_action_button = None
         page.bgcolor = T.FONDO
         page.controls.clear()
@@ -433,8 +474,9 @@ async def _app(page: ft.Page):
                 encabezado,
                 ft.Container(
                     expand=True,
-                    padding=ft.Padding(12, 12, 12, 12),
-                    content=ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO,
+                    padding=ft.Padding(pad, pad, pad, pad),
+                    content=ft.Column(spacing=M["sep_bloques"],
+                                      scroll=ft.ScrollMode.AUTO,
                                       controls=grillas)),
                 barra,
             ]))
@@ -448,7 +490,7 @@ async def _app(page: ft.Page):
 
         filas = []
         por_ejes = s.totales_por_ejes()
-        for grupo, (etiqueta, _, _) in GRUPOS_EJES.items():
+        for grupo, (etiqueta, _) in GRUPOS_EJES.items():
             color = T.COLOR_EJES[grupo]
             filas.append(ft.Container(
                 padding=ft.Padding(0, 6, 0, 2),
@@ -540,27 +582,42 @@ async def _app(page: ft.Page):
         try:
             ruta_det = exportar_csv(s)
             ruta_res = exportar_resumen_csv(s)
-            msg = (f"CSV guardados en:\n{CARPETA_DATOS}\n\n"
-                   f"• {ruta_det.name}\n• {ruta_res.name}")
-            if EN_DESCARGAS:
-                msg += "\n\n✓ Están en Descargas: se ven al conectar el cable."
-            elif not CARPETA_ALCANZABLE:
-                msg += ("\n\n⚠ Esta carpeta es interna del teléfono: los CSV no "
-                        "se pueden sacar por cable.")
-                if EN_ANDROID:
-                    msg += "\n\n" + AYUDA_PERMISO
+
+            # Lo primero es el resultado de la planilla, que es lo que este
+            # botón agrega: los CSV ya venían al día desde cada registro.
+            partes = []
             if sheets_configurado():
                 try:
                     r = sincronizar_sheets(s)
-                    msg += (f"\n\n✓ Google Sheets: {r.get('nuevas', 0)} fila(s) "
-                            f"nuevas, {r.get('actualizadas', 0)} actualizada(s). "
-                            f"Total en la planilla: {r.get('total', '?')}.")
+                    partes.append(
+                        f"✓ Enviado a la planilla: {r.get('nuevas', 0)} "
+                        f"registro(s) nuevo(s), {r.get('actualizadas', 0)} "
+                        f"actualizado(s).\nTotal en la planilla: "
+                        f"{r.get('total', '?')}.")
+                    if r.get("aviso"):
+                        partes.append("ℹ " + r["aviso"])
                 except Exception as ex_sheets:
-                    msg += (f"\n\n⚠ No se pudo sincronizar con Sheets:\n"
-                            f"{ex_sheets}\n\nLos CSV sí quedaron guardados. "
-                            f"Puedes volver a exportar cuando haya señal: no "
-                            f"se duplican los datos.")
-            aviso("Exportado", msg)
+                    partes.append(
+                        f"⚠ No se pudo enviar a la planilla:\n{ex_sheets}\n\n"
+                        f"Los {s.total()} registros están guardados en el "
+                        f"teléfono. Vuelve a exportar cuando haya internet: "
+                        f"se sube todo lo que falte y no se duplica nada.")
+            else:
+                partes.append("Sin planilla configurada: los datos quedan solo "
+                              "en los CSV del teléfono.")
+
+            partes.append(f"CSV al día en:\n{CARPETA_DATOS}\n"
+                          f"• {ruta_det.name}\n• {ruta_res.name}")
+            if EN_DESCARGAS:
+                partes.append("✓ Están en Descargas: se ven al conectar el cable.")
+            elif not CARPETA_ALCANZABLE:
+                aviso_carpeta = ("⚠ Esta carpeta es interna del teléfono: los "
+                                 "CSV no se pueden sacar por cable.")
+                if EN_ANDROID:
+                    aviso_carpeta += "\n\n" + AYUDA_PERMISO
+                partes.append(aviso_carpeta)
+
+            aviso("Registros exportados", "\n\n".join(partes))
         except Exception as ex:
             aviso("Error al exportar", str(ex))
 

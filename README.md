@@ -128,7 +128,12 @@ mantiene sobre blanco, porque es un área diminuta y ahí prima la marca.
   Script, para no depender de librerías nativas en Android.
 - Lo que se sincroniza es el **detalle**, no el resumen: cada fila tiene un
   `veh_id` único, así que el script hace *upsert* y **volver a exportar es
-  inocuo** — no duplica. Eso permite sincronizar varias veces durante la jornada
+  inocuo** — no duplica.
+- **Si cambian las columnas**, el script archiva la hoja anterior como
+  `conteo_antigua` y crea una nueva con los encabezados correctos, avisándolo en
+  el diálogo de exportación. Escribir bajo encabezados que no corresponden
+  desalinearía todas las filas nuevas en silencio, y borrar la hoja perdería lo
+  anterior. Esto pasó al reemplazar el catálogo de vehículos. Eso permite sincronizar varias veces durante la jornada
   como respaldo, y que una anulación posterior corrija la fila ya enviada en vez
   de dejar un dato viejo. El resumen se reconstruye en la planilla con una tabla
   dinámica.
@@ -180,9 +185,20 @@ se aprieta Exportar los datos aparecen solos en la planilla.
      (necesario para que el teléfono pueda escribir sin iniciar sesión; el TOKEN
      es lo que impide que un tercero con la URL escriba en tu planilla)
 7. Copiar la **URL de la aplicación web**, la que termina en `/exec`.
-8. En [almacenamiento.py](almacenamiento.py), en el bloque de configuración:
-   - `_GAS_URL` = la URL del paso 7
-   - `_GAS_TOKEN` = **exactamente** el mismo texto del paso 4
+8. Copiar `config_sheets.ejemplo.py` como **`config_sheets.py`** y poner ahí:
+   - `GAS_URL` = la URL del paso 7
+   - `GAS_TOKEN` = **exactamente** el mismo texto del paso 4
+
+   Ese archivo está en `.gitignore` porque el repositorio es público: con la URL
+   y el token cualquiera podría escribir en la planilla. Por eso `apps_script.gs`
+   tampoco lleva el token real — se pone solo en el editor de Apps Script.
+   **Al compilar hay que copiar `config_sheets.py`** junto a los demás módulos,
+   o la app queda sin sincronización.
+
+> ### Si se edita el script después
+> Hay que hacer **Implementar → Gestionar implementaciones → editar (lápiz) →
+> Versión: Nueva versión → Implementar**. La URL no cambia, pero si se omite este
+> paso la app sigue hablando con el código viejo.
 
 Para verificarlo: abrir la app, registrar un vehículo, apretar Exportar. El
 diálogo debe decir cuántas filas nuevas se enviaron. El Resumen también indica

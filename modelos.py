@@ -14,7 +14,7 @@ import uuid
 # Catálogo
 #
 # La grilla tiene dos bloques por sentido, uno por grupo de ejes. Cada bloque
-# lista sus tipos; "trolly" se dibuja aparte, a lo ancho, como en la maqueta.
+# lista sus tipos y todos los botones comparten el ancho de su fila.
 # ---------------------------------------------------------------------------
 
 TIPOS_VEHICULO = {
@@ -22,17 +22,16 @@ TIPOS_VEHICULO = {
     "bus":         "Bus",
     "camion":      "Camión",
     "moto":        "Moto",
-    "trolly":      "Trolly",
+    "trolley":     "Trolley",
 }
 
-# clave → (etiqueta, tipos en fila, tipos a lo ancho)
+# clave → (etiqueta, tipos del bloque)
+# Todos los botones son del mismo ancho: se reparten el espacio de su fila.
 GRUPOS_EJES = {
     "2":  ("Vehículo de 2 ejes",
-           ["auto_furgon", "bus", "camion", "moto"],
-           ["trolly"]),
+           ["auto_furgon", "bus", "camion", "moto", "trolley"]),
     "3+": ("Vehículo de 3 o más ejes",
-           ["camion", "bus"],
-           ["trolly"]),
+           ["camion", "bus", "trolley"]),
 }
 
 ETIQUETA_EJES = {"2": "2 ejes", "3+": "3 o más ejes"}
@@ -81,11 +80,8 @@ def etiqueta_ejes(grupo: str) -> str:
 
 def combinaciones() -> list[tuple[str, str]]:
     """Todos los (grupo_ejes, tipo) válidos, en el orden de la grilla."""
-    pares = []
-    for grupo, (_, en_fila, anchos) in GRUPOS_EJES.items():
-        for t in list(en_fila) + list(anchos):
-            pares.append((grupo, t))
-    return pares
+    return [(grupo, t) for grupo, (_, tipos) in GRUPOS_EJES.items()
+            for t in tipos]
 
 
 # ---------------------------------------------------------------------------

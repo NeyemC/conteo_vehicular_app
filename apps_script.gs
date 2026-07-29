@@ -43,7 +43,8 @@ function doPost(e) {
     const lock = LockService.getScriptLock();
     lock.waitLock(30000);
     try {
-      const hoja = obtenerHoja(columnas);
+      const avisos = [];
+      const hoja = obtenerHoja(columnas, avisos);
 
       // Índice de lo que ya está en la planilla: llave -> número de fila real.
       const ultima = hoja.getLastRow();
@@ -76,7 +77,8 @@ function doPost(e) {
       return respuesta({
         nuevas: nuevas.length,
         actualizadas: actualizadas,
-        total: hoja.getLastRow() - 1
+        total: hoja.getLastRow() - 1,
+        aviso: avisos.join(' ')
       });
     } finally {
       lock.releaseLock();
@@ -88,38 +90,45 @@ function doPost(e) {
 
 
 /**
- * Devuelve la hoja de destino, creándola con encabezados si no existe.
+ * Devuelve la hoja de destino con los encabezados correctos.
  *
- * Si la hoja ya tiene encabezados y NO coinciden con las columnas que manda la
- * app, lanza en vez de escribir: eso pasa cuando cambia el modelo de datos, y
- * escribir igual desalinearía todas las filas nuevas en silencio. La solución
- * es borrar el contenido de la hoja (encabezados incluidos) para que se
- * regenere, o renombrar HOJA para empezar una nueva.
+ * Si la hoja existe pero sus encabezados NO coinciden con las columnas que manda
+ * la app (pasa cuando cambia el modelo de datos), la hoja vieja se ARCHIVA con
+ * otro nombre y se crea una nueva. Escribir igual desalinearía todas las filas
+ * nuevas en silencio, y borrarla perdería los datos anteriores.
+ *
+ * `avisos` es un arreglo donde se deja constancia, para que la app lo muestre.
  */
-function obtenerHoja(columnas) {
+function obtenerHoja(columnas, avisos) {
   const libro = SpreadsheetApp.getActiveSpreadsheet();
   var hoja = libro.getSheetByName(HOJA);
+
+  if (hoja && hoja.getLastRow() > 0) {
+    const actuales = hoja.getRange(1, 1, 1, hoja.getLastColumn())
+                         .getValues()[0]
+                         .map(function (x) { return String(x).trim(); })
+                         .filter(function (x) { return x !== ''; });
+    if (actuales.join('|') !== columnas.join('|')) {
+      var nombreArchivo = HOJA + '_antigua';
+      var n = 2;
+      while (libro.getSheetByName(nombreArchivo)) {
+        nombreArchivo = HOJA + '_antigua_' + n;
+        n++;
+      }
+      hoja.setName(nombreArchivo);
+      avisos.push('Las columnas cambiaron: la hoja anterior se archivó como "' +
+                  nombreArchivo + '" y se creó una nueva "' + HOJA + '".');
+      hoja = null;   // se crea limpia más abajo
+    }
+  }
+
   if (!hoja) {
-    hoja = libro.insertSheet(HOJA);
+    hoja = libro.getSheetByName(HOJA) || libro.insertSheet(HOJA);
   }
   if (hoja.getLastRow() === 0) {
     hoja.getRange(1, 1, 1, columnas.length).setValues([columnas]);
     hoja.getRange(1, 1, 1, columnas.length).setFontWeight('bold');
     hoja.setFrozenRows(1);
-    return hoja;
-  }
-
-  const actuales = hoja.getRange(1, 1, 1, hoja.getLastColumn())
-                       .getValues()[0]
-                       .map(function (x) { return String(x).trim(); })
-                       .filter(function (x) { return x !== ''; });
-  if (actuales.join('|') !== columnas.join('|')) {
-    throw new Error(
-        'Los encabezados de la hoja "' + HOJA + '" no coinciden con los que ' +
-        'manda la app. En la hoja: [' + actuales.join(', ') + ']. ' +
-        'Esperados: [' + columnas.join(', ') + ']. ' +
-        'Borra el contenido de la hoja (encabezados incluidos) para que se ' +
-        'regenere, o cambia HOJA en el script para empezar una hoja nueva.');
   }
   return hoja;
 }

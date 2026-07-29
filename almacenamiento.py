@@ -1,17 +1,22 @@
 """
-Persistencia local (JSON) y exportación a CSV.
+Persistencia local (JSON + CSV) y sincronización con Google Sheets.
 
-En Android se prefiere la carpeta externa propia del app
-(/storage/emulated/0/Android/data/<pkg>/files/...), porque es la única que el
-encuestador puede alcanzar para sacar los CSV del teléfono (por cable, o desde
-un explorador de archivos) y que además no exige permisos en Android 10+.
-Si el sistema no la deja escribir, se cae a la carpeta interna del app, que
-siempre funciona aunque no sea alcanzable por el usuario.
+Dos redes de seguridad, las dos actualizadas en CADA registro:
+  - el JSON de la sesión, que es lo que permite reanudarla;
+  - el CSV de detalle, legible sin la app y recuperable por cable.
+
+La sincronización con la planilla, en cambio, ocurre solo al exportar: necesita
+internet y en terreno puede no haber.
+
+En Android se intenta escribir en Descargas (ver `_candidatas`), que es la única
+carpeta que el encuestador puede alcanzar; si falta el permiso se cae a la
+carpeta interna del app, que siempre funciona pero no se ve desde afuera.
 En Windows/Mac se usa ~/conteo_vehicular.
 """
 
 import json
 import csv
+import os
 import re as _re
 import tempfile
 from pathlib import Path
@@ -216,15 +221,35 @@ def _fila_detalle(sesion: SesionConteo, v: Vehiculo) -> dict:
     }
 
 
-def exportar_csv(sesion: SesionConteo) -> Path:
-    """Un registro por vehículo, incluidos los anulados (marcados como tal)."""
-    ruta = CARPETA_DATOS / f"{_prefijo(sesion)}_detalle.csv"
-    with open(ruta, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=COLUMNAS_DETALLE)
+def _escribir_csv(ruta: Path, columnas: list[str], filas) -> Path:
+    """
+    Escribe primero en un temporal y después reemplaza.
+
+    El CSV de detalle se reescribe en cada registro, así que un cierre de la app
+    a media escritura podría dejarlo truncado. Con el reemplazo, o queda el
+    archivo anterior completo o el nuevo completo, nunca uno a medias.
+    """
+    tmp = ruta.with_suffix(ruta.suffix + ".tmp")
+    with open(tmp, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=columnas)
         writer.writeheader()
-        for v in sorted(sesion.vehiculos, key=lambda v: v.registrado_en):
-            writer.writerow(_fila_detalle(sesion, v))
+        writer.writerows(filas)
+    os.replace(tmp, ruta)
     return ruta
+
+
+def exportar_csv(sesion: SesionConteo) -> Path:
+    """
+    Un registro por vehículo, incluidos los anulados (marcados como tal).
+
+    Se llama tras CADA registro, no solo al exportar: así el CSV está siempre al
+    día y se puede recuperar la jornada incluso sin abrir la app.
+    """
+    return _escribir_csv(
+        CARPETA_DATOS / f"{_prefijo(sesion)}_detalle.csv",
+        COLUMNAS_DETALLE,
+        (_fila_detalle(sesion, v)
+         for v in sorted(sesion.vehiculos, key=lambda v: v.registrado_en)))
 
 
 def _filas_resumen(sesion: SesionConteo) -> list[dict]:
@@ -252,14 +277,10 @@ def _filas_resumen(sesion: SesionConteo) -> list[dict]:
 
 
 def exportar_resumen_csv(sesion: SesionConteo) -> Path:
-    """Conteos agregados por sentido, tipo y número de ejes.
+    """Conteos agregados por sentido, grupo de ejes y tipo.
     Para agrupar por tramos horarios, usar la columna `timestamp` del detalle."""
-    ruta = CARPETA_DATOS / f"{_prefijo(sesion)}_resumen.csv"
-    with open(ruta, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=COLUMNAS_RESUMEN)
-        writer.writeheader()
-        writer.writerows(_filas_resumen(sesion))
-    return ruta
+    return _escribir_csv(CARPETA_DATOS / f"{_prefijo(sesion)}_resumen.csv",
+                         COLUMNAS_RESUMEN, _filas_resumen(sesion))
 
 
 # ---------------------------------------------------------------------------
