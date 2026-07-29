@@ -1,0 +1,10 @@
+# Version FIJA a proposito, no `>=`.
+#
+# Flet es cliente-servidor: `flet build` genera el cliente Dart con la version
+# del CLI instalado, y pip instala el lado Python dentro del APK. Si no se fija,
+# pip resuelve a la ultima version y quedan dos versiones distintas hablando
+# entre si: la app arranca, Python no lanza ningun error, y la pantalla queda
+# en negro porque la interfaz nunca llega a dibujarse.
+#
+# Debe coincidir con la salida de `flet --version`.
+flet==0.85.3

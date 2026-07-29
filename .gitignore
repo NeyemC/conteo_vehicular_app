@@ -1,0 +1,8 @@
+__pycache__/
+build/
+
+# Credenciales de Google Sheets. El repositorio es publico: con la URL del
+# Apps Script mas el token, cualquiera podria escribir en la planilla.
+# La plantilla versionada es config_sheets.ejemplo.py
+config_sheets.py
+credenciales_google.json
