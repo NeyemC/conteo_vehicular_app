@@ -94,12 +94,20 @@ async def _app(page: ft.Page):
     def abrir_dialogo(dlg): page.show_dialog(dlg)
     def cerrar_dialogo():   page.pop_dialog()
 
-    def aviso(titulo: str, mensaje: str):
+    def aviso(titulo: str, mensaje: str, al_cerrar=None):
+        """`al_cerrar` permite, por ejemplo, volver al inicio tras finalizar."""
+        async def cerrar(e):
+            cerrar_dialogo()
+            if al_cerrar is not None:
+                al_cerrar()
+
         abrir_dialogo(ft.AlertDialog(
-            modal=False,
+            modal=al_cerrar is not None,
             title=ft.Text(titulo),
-            content=ft.Text(mensaje),
-            actions=[ft.TextButton("OK", on_click=lambda e: cerrar_dialogo())],
+            content=ft.Container(width=420, content=ft.Column(
+                tight=True, scroll=ft.ScrollMode.AUTO,
+                controls=[ft.Text(mensaje, size=13, selectable=True)])),
+            actions=[ft.TextButton("OK", on_click=cerrar)],
         ))
 
     # ══════════════════════════════════════════════════════════════════════
@@ -270,15 +278,20 @@ async def _app(page: ft.Page):
         w_sentido: dict[str, ft.Text] = {}
         w_ultimo = ft.Text("Sin registros", size=12, color=T.TEXTO_3)
         w_estado_csv = ft.Text("", size=10, color=T.ERROR, visible=False)
-        btn_deshacer = ft.TextButton(
-            "Deshacer", icon=ft.Icons.UNDO,
-            style=ft.ButtonStyle(color=T.SALIDA),
-            disabled=True)
-        btn_exportar = ft.FilledButton(
-            "Exportar registros", icon=ft.Icons.CLOUD_UPLOAD, expand=True,
+        btn_deshacer = ft.OutlinedButton(
+            "Deshacer último registro", icon=ft.Icons.UNDO, expand=True,
+            disabled=True,
+            style=ft.ButtonStyle(
+                color=T.SALIDA,
+                side=ft.BorderSide(1, T.con_alfa(T.SALIDA, 0.55)),
+                padding=ft.Padding(10, 16, 10, 16),
+                shape=ft.RoundedRectangleBorder(radius=10)))
+        btn_finalizar = ft.FilledButton(
+            "Finalizar conteo y guardar", icon=ft.Icons.CHECK_CIRCLE,
+            expand=True,
             style=ft.ButtonStyle(
                 bgcolor=T.PRIMARIO, color=T.TEXTO_SOBRE_ACENTO,
-                padding=ft.Padding(12, 14, 12, 14),
+                padding=ft.Padding(10, 16, 10, 16),
                 shape=ft.RoundedRectangleBorder(radius=10)))
 
         # ── aviso no bloqueante ───────────────────────────────────────────
@@ -434,26 +447,20 @@ async def _app(page: ft.Page):
                 ]),
         )
 
-        # ── barra inferior: último registro, deshacer y exportar ───────────
-        # Exportar es un botón con texto, no un icono en el encabezado: es la
-        # acción que manda los datos a la planilla y tiene que ser evidente.
-        btn_exportar.on_click = accion_exportar
-        barra = ft.Container(
-            bgcolor=T.SUPERFICIE,
-            border=ft.Border(top=ft.BorderSide(1, T.BORDE_SUAVE)),
-            padding=ft.Padding(12, 6, 12, 8),
-            content=ft.Column(spacing=6, controls=[
-                ft.Row(
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    controls=[
-                        ft.Column(spacing=0, expand=True, controls=[
-                            ft.Text("Último", size=10, color=T.TEXTO_3),
-                            w_ultimo,
-                            w_estado_csv,
-                        ]),
-                        btn_deshacer,
-                    ]),
-                btn_exportar,
+        # ── pie: último registro y las dos acciones ────────────────────────
+        # Va DENTRO del contenido, justo debajo de la grilla, no como barra fija
+        # al fondo de la pantalla.
+        btn_finalizar.on_click = accion_finalizar
+        pie = ft.Container(
+            padding=ft.Padding(0, M["sep_bloques"], 0, 0),
+            content=ft.Column(spacing=8, controls=[
+                ft.Divider(height=1, color=T.BORDE_SUAVE),
+                ft.Row(spacing=6, controls=[
+                    ft.Text("Último registro:", size=11, color=T.TEXTO_3),
+                    w_ultimo,
+                ]),
+                w_estado_csv,
+                ft.Row(spacing=8, controls=[btn_deshacer, btn_finalizar]),
             ]),
         )
 
@@ -477,8 +484,7 @@ async def _app(page: ft.Page):
                     padding=ft.Padding(pad, pad, pad, pad),
                     content=ft.Column(spacing=M["sep_bloques"],
                                       scroll=ft.ScrollMode.AUTO,
-                                      controls=grillas)),
-                barra,
+                                      controls=grillas + [pie])),
             ]))
         actualizar()
 
@@ -572,12 +578,54 @@ async def _app(page: ft.Page):
         ))
 
     # ══════════════════════════════════════════════════════════════════════
-    # Exportar
+    # Finalizar el conteo
     # ══════════════════════════════════════════════════════════════════════
-    async def accion_exportar(_e):
+    async def accion_finalizar(_e):
+        """Pide confirmación antes de cerrar la sesión: es irreversible en el
+        sentido de que saca al encuestador de la pantalla de conteo."""
+        s = sesion[0]
+        n = s.total()
+
+        async def confirmar(e):
+            cerrar_dialogo()
+            await _exportar_y_cerrar()
+
+        detalle = (f"Se guardarán los {n} registros y se enviarán a la planilla."
+                   if n else "No hay registros en esta sesión.")
+        abrir_dialogo(ft.AlertDialog(
+            modal=True,
+            title=ft.Row(spacing=8, controls=[
+                ft.Icon(ft.Icons.WARNING_AMBER, color=T.SALIDA, size=24),
+                ft.Text("¿Finalizar la sesión de conteo?",
+                        weight=ft.FontWeight.BOLD, expand=True),
+            ]),
+            content=ft.Container(width=420, content=ft.Column(
+                tight=True, spacing=8, controls=[
+                    ft.Text(detalle, size=13),
+                    ft.Text("Vas a volver a la pantalla inicial y dejarás de "
+                            "contar en esta posición.", size=13,
+                            color=T.TEXTO_2),
+                    ft.Text("La sesión queda guardada: si algo falla al enviarla, "
+                            "puedes continuarla después desde la pantalla "
+                            "inicial.", size=12, color=T.TEXTO_3),
+                ])),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda e: cerrar_dialogo()),
+                ft.FilledButton(
+                    "Sí, finalizar", icon=ft.Icons.CHECK,
+                    style=ft.ButtonStyle(bgcolor=T.PRIMARIO,
+                                         color=T.TEXTO_SOBRE_ACENTO),
+                    on_click=confirmar),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        ))
+
+    async def _exportar_y_cerrar():
         s = sesion[0]
         if not s.vigentes():
-            aviso("Sin datos para exportar", "Aún no hay vehículos registrados.")
+            # Sin registros no hay nada que exportar, pero igual se cierra.
+            sesion[0] = None
+            mostrar_setup()
             return
         try:
             ruta_det = exportar_csv(s)
@@ -617,9 +665,16 @@ async def _app(page: ft.Page):
                     aviso_carpeta += "\n\n" + AYUDA_PERMISO
                 partes.append(aviso_carpeta)
 
-            aviso("Registros exportados", "\n\n".join(partes))
+            # Al cerrar el aviso se vuelve al inicio: la sesión terminó.
+            def volver_al_inicio():
+                sesion[0] = None
+                mostrar_setup()
+
+            aviso("Conteo finalizado", "\n\n".join(partes), volver_al_inicio)
         except Exception as ex:
-            aviso("Error al exportar", str(ex))
+            # Si falla la escritura, NO se cierra la sesión: se queda en la
+            # pantalla de conteo para no dejar al encuestador sin dónde volver.
+            aviso("Error al guardar", f"{ex}\n\nLa sesión sigue abierta.")
 
     mostrar_setup()
 
