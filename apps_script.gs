@@ -46,38 +46,62 @@ function doPost(e) {
       const avisos = [];
       const hoja = obtenerHoja(columnas, avisos);
 
-      // Índice de lo que ya está en la planilla: llave -> número de fila real.
+      // Se lee TODO el bloque de datos una vez, se modifica en memoria y se
+      // escribe de vuelta en una sola llamada.
+      //
+      // Antes se hacía un setValues por cada fila actualizada, y en Apps Script
+      // eso es carísimo: reexportar 800 registros eran 800 llamadas, decenas de
+      // segundos con el lock tomado. Con el lock retenido tanto rato, un segundo
+      // teléfono exportando a la vez se topaba con el límite de 30 s del
+      // waitLock y fallaba, y encima se acercaba al tope de 6 minutos de
+      // ejecución de Apps Script.
+      const ancho = columnas.length;
       const ultima = hoja.getLastRow();
-      const posicion = {};
+      var datos = [];
       if (ultima > 1) {
-        const llaves = hoja.getRange(2, iClave + 1, ultima - 1, 1).getValues();
-        for (var i = 0; i < llaves.length; i++) {
-          posicion[String(llaves[i][0])] = i + 2;
-        }
+        datos = hoja.getRange(2, 1, ultima - 1, ancho).getValues();
+      }
+
+      // llave -> posición en `datos`, guardada +1 para que el índice 0 no se
+      // confunda con "no está".
+      const indice = {};
+      for (var i = 0; i < datos.length; i++) {
+        indice[String(datos[i][iClave])] = i + 1;
       }
 
       const nuevas = [];
       var actualizadas = 0;
+      var desde = -1, hasta = -1;
       for (var j = 0; j < filas.length; j++) {
         const fila = filas[j];
         const llave = String(fila[iClave]);
-        if (posicion[llave]) {
-          hoja.getRange(posicion[llave], 1, 1, columnas.length).setValues([fila]);
+        const encontrado = indice[llave];
+        if (encontrado) {
+          const k = encontrado - 1;
+          datos[k] = fila;
           actualizadas++;
+          if (desde < 0 || k < desde) { desde = k; }
+          if (k > hasta) { hasta = k; }
         } else {
           nuevas.push(fila);
         }
       }
 
+      // Una sola escritura para todas las actualizaciones: solo el tramo que
+      // realmente cambió, para no reescribir filas de sesiones anteriores.
+      if (actualizadas > 0) {
+        hoja.getRange(2 + desde, 1, hasta - desde + 1, ancho)
+            .setValues(datos.slice(desde, hasta + 1));
+      }
       if (nuevas.length) {
-        hoja.getRange(hoja.getLastRow() + 1, 1, nuevas.length, columnas.length)
+        hoja.getRange(2 + datos.length, 1, nuevas.length, ancho)
             .setValues(nuevas);
       }
 
       return respuesta({
         nuevas: nuevas.length,
         actualizadas: actualizadas,
-        total: hoja.getLastRow() - 1,
+        total: datos.length + nuevas.length,
         aviso: avisos.join(' ')
       });
     } finally {
