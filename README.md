@@ -236,6 +236,18 @@ la sincronización está activa o si está en modo solo-CSV.
 > versión → Implementar**. La URL no cambia, pero si se omite este paso la app
 > sigue hablando con el código viejo.
 
+> ### Actualizarlo desde la terminal, con clasp
+> El script está vinculado a la planilla, así que no aparece en Drive ni en
+> `clasp list`: su ID está en el editor, en ⚙ *Configuración del proyecto*.
+> En este PC ya hay un clon con el ID en
+> `~/In-data/conteo_vehicular_apps_script_respaldo/trabajo/.clasp.json`.
+> Para publicar un cambio: copiar `apps_script.gs` como `Código.js` en esa
+> carpeta **reemplazando el TOKEN por el real**, y luego
+> `clasp push --force` y `clasp deploy -i <id de la implementación> -d "..."`.
+> El id de la implementación es el que va en la URL `/macros/s/<id>/exec` de
+> `config_sheets.py`; con `-i` la URL no cambia. Hay otras dos
+> implementaciones (`@HEAD` y `@2`) que la app no usa.
+
 > ### Orden al actualizar: primero el script, después el APK
 > Desde la versión 1.1.0 la app manda la llave como `["sesion_id", "veh_id"]`.
 > El script nuevo acepta tanto eso como el `"veh_id"` de los APK anteriores,
@@ -393,6 +405,11 @@ APK (`adb shell pm path …` y `adb pull`) y comparar los `.py` que trae en
 - ✅ **Sincronización con Sheets configurada y probada** (27-07-2026) contra la
   planilla real: primer envío, reenvío sin duplicar, corrección de una anulación
   ya sincronizada, y rechazo de token incorrecto.
+- ✅ **Script 1.1.0 implementado** (28-10-2026, versión 3 de la implementación
+  que usa la app). Probado contra la planilla real: rechaza un token malo, acepta
+  la llave nueva y la antigua, y reenviar una sesión ya sincronizada actualizó
+  sus 10 filas sin agregar ninguna. Antes se respaldó el código anterior y se
+  hizo una copia de la planilla en Drive.
 - ✅ **Los CSV llegan a Descargas** (verificado el 28-10-2026 en un Samsung
   SM-A176B): `Download/conteo_vehicular` tenía las sesiones de julio y agosto.
   Funcionó **sin** conceder "Acceso a todos los archivos": desde Android 11 una
@@ -408,8 +425,6 @@ APK (`adb shell pm path …` y `adb pull`) y comparar los `.py` que trae en
 
 ## Pendiente
 
-- **Implementar el `apps_script.gs` nuevo en la planilla** antes de instalar el
-  APK 1.1.0 (ver "Orden al actualizar").
 - **Desinstalar pierde el acceso a los CSV viejos.** Android asocia cada
   archivo de Descargas a la instalación que lo creó; actualizar (`adb install
   -r`, o abrir el APK nuevo encima) lo conserva, desinstalar no. Pasó una vez,
