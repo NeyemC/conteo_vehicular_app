@@ -78,6 +78,10 @@ def etiqueta_ejes(grupo: str) -> str:
     return ETIQUETA_EJES[grupo]
 
 
+def _id_corto(n: int) -> str:
+    return uuid.uuid4().hex[:n].upper()
+
+
 def combinaciones() -> list[tuple[str, str]]:
     """Todos los (grupo_ejes, tipo) válidos, en el orden de la grilla."""
     return [(grupo, t) for grupo, (_, tipos) in GRUPOS_EJES.items()
@@ -96,7 +100,10 @@ class Vehiculo:
 
     def __init__(self, tipo: str, grupo_ejes: str, sentido: str, numero: int,
                  nota: str = "", extra: dict | None = None):
-        self.id = str(uuid.uuid4())[:6].upper()
+        # 6 caracteres hex: corto para leerlo en el CSV, pero solo es único
+        # DENTRO de la sesión (lo garantiza agregar_vehiculo). En la planilla
+        # la llave es sesion_id + veh_id.
+        self.id = _id_corto(6)
         self.tipo = tipo
         self.grupo_ejes = grupo_ejes
         self.sentido = sentido
@@ -162,7 +169,7 @@ class SesionConteo:
 
     def __init__(self, aeropuerto: str, encuestador: str, posicion: str,
                  fecha: str | None = None):
-        self.id = str(uuid.uuid4())[:8].upper()
+        self.id = _id_corto(8)
         self.aeropuerto = aeropuerto
         self.encuestador = encuestador
         self.posicion = str(posicion)
@@ -177,6 +184,10 @@ class SesionConteo:
                          extra: dict | None = None) -> Vehiculo:
         self._contador += 1
         v = Vehiculo(tipo, grupo_ejes, sentido, self._contador, nota, extra)
+        # Con 2000 registros, dos ids de 6 hex chocan ~11% de las veces.
+        usados = {x.id for x in self.vehiculos}
+        while v.id in usados:
+            v.id = _id_corto(6)
         self.vehiculos.append(v)
         return v
 

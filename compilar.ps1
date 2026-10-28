@@ -28,10 +28,13 @@ Write-Host "taller: $taller  (fuera de OneDrive)"
 Write-Host ""
 
 # --- 1. Demonios de Gradle vivos de compilaciones anteriores ---------------
-$java = Get-Process java -ErrorAction SilentlyContinue
-if ($java) {
-    Write-Host "Cerrando $($java.Count) proceso(s) java que podrian tener archivos tomados..."
-    $java | Stop-Process -Force -ErrorAction SilentlyContinue
+# Solo los java de Gradle: cerrar todos los java del equipo mataria tambien
+# Android Studio u otros programas abiertos.
+$gradle = @(Get-CimInstance Win32_Process -Filter "Name = 'java.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -match 'gradle' })
+if ($gradle.Count -gt 0) {
+    Write-Host "Cerrando $($gradle.Count) demonio(s) de Gradle que podrian tener archivos tomados..."
+    $gradle | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Seconds 2
 }
 
@@ -59,6 +62,14 @@ Copy-Item (Join-Path $fuente "assets") $taller -Recurse -Force
 Write-Host "Copiados $($modulos.Count) modulos + assets/" -ForegroundColor Green
 
 # --- 3. Compilar -----------------------------------------------------------
+# El numero de compilacion es la fecha y hora (aaMMddHH): asi cada APK lleva un
+# versionCode mayor que el anterior, y `adb shell dumpsys package` dice de
+# cuando es el que esta instalado. Antes todos salian como 1 / 1.0.0 y no
+# habia forma de distinguirlos sin abrir el APK.
+$version = "1.1.0"
+$numero  = Get-Date -Format "yyMMddHH"
+Write-Host "version $version, compilacion $numero"
+
 Push-Location $taller
 try {
     Write-Host ""
@@ -66,6 +77,8 @@ try {
     flet build apk `
         --org cl.indata `
         --product "Conteo Vehicular" `
+        --build-version $version `
+        --build-number $numero `
         --android-permissions android.permission.MANAGE_EXTERNAL_STORAGE=true `
         --android-adaptive-icon-background "#FFFFFF" `
         --splash-color "#000000" `

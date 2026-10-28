@@ -6,6 +6,7 @@ combinación de tipo y grupo de ejes. Cada toque registra un vehículo. En la
 posición 5 la grilla se duplica, un bloque por sentido.
 """
 
+import asyncio
 import traceback
 import flet as ft
 
@@ -46,8 +47,12 @@ def _pantalla_error(page: ft.Page, titulo: str, detalle: str):
     Muestra el error en pantalla. Sin esto, cualquier excepción al arrancar deja
     el teléfono en negro y no hay forma de saber qué pasó sin conectar el cable.
     """
+    # Si lo que falló fue el import de tema, `T` no existe: los colores van con
+    # respaldo fijo para que esta pantalla no falle también.
+    tema = globals().get("T")
+    color = lambda nombre, respaldo: getattr(tema, nombre, respaldo)
     page.title = "Error"
-    page.bgcolor = T.FONDO if T else "#000000"
+    page.bgcolor = color("FONDO", "#000000")
     page.padding = 0
     page.floating_action_button = None
     page.controls.clear()
@@ -56,18 +61,20 @@ def _pantalla_error(page: ft.Page, titulo: str, detalle: str):
         padding=ft.Padding(20, 28, 20, 20),
         content=ft.Column(spacing=14, scroll=ft.ScrollMode.AUTO, controls=[
             ft.Row(spacing=10, controls=[
-                ft.Icon(ft.Icons.ERROR_OUTLINE, color=T.ERROR, size=30),
+                ft.Icon(ft.Icons.ERROR_OUTLINE, color=color("ERROR", "#FF9A90"),
+                        size=30),
                 ft.Text(titulo, size=19, weight=ft.FontWeight.BOLD,
-                        color=T.ERROR, expand=True),
+                        color=color("ERROR", "#FF9A90"), expand=True),
             ]),
             ft.Text("Muestra esta pantalla a quien mantiene la app.",
-                    size=13, color=T.TEXTO_2),
+                    size=13, color=color("TEXTO_2", "#BFBFCB")),
             ft.Container(
-                bgcolor=T.SUPERFICIE_2,
+                bgcolor=color("SUPERFICIE_2", "#24242E"),
                 border_radius=8,
                 padding=ft.Padding(12, 12, 12, 12),
                 content=ft.Text(detalle, size=11, selectable=True,
-                                font_family="monospace", color=T.TEXTO)),
+                                font_family="monospace",
+                                color=color("TEXTO", "#F2F2F6"))),
         ]),
     ))
     page.update()
@@ -133,16 +140,19 @@ async def _app(page: ft.Page):
         error = ft.Text("", color=T.ERROR, size=13)
 
         async def iniciar(e):
-            if not dd_aero.value or not campo_nombre.value or not dd_posicion.value:
+            nombre = (campo_nombre.value or "").strip()
+            if not dd_aero.value or not nombre or not dd_posicion.value:
                 error.value = "Completa aeropuerto, nombre y posición."
                 page.update()
                 return
+            # No se guarda todavía: el JSON se escribe con el primer registro.
+            # Guardarlo acá dejaba un archivo vacío por cada sesión iniciada
+            # y abandonada, que nunca se puede reanudar.
             sesion[0] = SesionConteo(
                 aeropuerto=dd_aero.value,
-                encuestador=campo_nombre.value.strip(),
+                encuestador=nombre,
                 posicion=dd_posicion.value,
             )
-            guardar(sesion[0])
             mostrar_principal()
 
         # ── reanudar una sesión anterior ──────────────────────────────────
@@ -196,7 +206,9 @@ async def _app(page: ft.Page):
             )
 
         try:
-            guardadas = [m for m in listar_sesiones() if m["total"] > 0][:8]
+            # Por registros y no por vigentes: una sesión con todo anulado
+            # puede tener filas en la planilla que falta marcar como anuladas.
+            guardadas = [m for m in listar_sesiones() if m["registros"] > 0][:8]
         except Exception:
             guardadas = []
 
@@ -277,7 +289,7 @@ async def _app(page: ft.Page):
         w_total = ft.Text("0", size=28, weight=ft.FontWeight.BOLD, color=T.PRIMARIO)
         w_sentido: dict[str, ft.Text] = {}
         w_ultimo = ft.Text("Sin registros", size=12, color=T.TEXTO_3)
-        w_estado_csv = ft.Text("", size=10, color=T.ERROR, visible=False)
+        w_estado = ft.Text("", size=10, color=T.ERROR, visible=False)
         btn_deshacer = ft.OutlinedButton(
             "Deshacer último registro", icon=ft.Icons.UNDO, expand=True,
             disabled=True,
@@ -305,17 +317,23 @@ async def _app(page: ft.Page):
                 bgcolor=color,
                 duration=1100))
 
-        # ── CSV siempre al día ────────────────────────────────────────────
-        # Se reescribe en cada registro (unos 20 ms con 2000 filas), así la
-        # jornada se puede recuperar sin abrir la app y sin depender de que
-        # alguien acuerde exportar.
-        def escribir_csv():
-            try:
-                exportar_csv(s)
-                w_estado_csv.visible = False
-            except Exception as ex:
-                w_estado_csv.value = f"No se pudo escribir el CSV: {ex}"
-                w_estado_csv.visible = True
+        # ── guardado tras cada cambio ─────────────────────────────────────
+        # El JSON permite reanudar la sesión; el CSV se reescribe en cada
+        # registro (unos 20 ms con 2000 filas), así la jornada se puede
+        # recuperar sin abrir la app y sin depender de que alguien acuerde
+        # exportar. Un fallo (disco lleno, permiso revocado) no detiene el
+        # conteo: el registro queda en memoria y se avisa en pantalla, y el
+        # próximo guardado exitoso lo incluye.
+        def persistir() -> bool:
+            fallas = []
+            for nombre, fn in (("la sesión", guardar), ("el CSV", exportar_csv)):
+                try:
+                    fn(s)
+                except Exception as ex:
+                    fallas.append(f"No se pudo guardar {nombre}: {ex}")
+            w_estado.value = "\n".join(fallas)
+            w_estado.visible = bool(fallas)
+            return not fallas
 
         # ── refresco de contadores ────────────────────────────────────────
         def actualizar():
@@ -335,10 +353,13 @@ async def _app(page: ft.Page):
 
         def registrar(tipo: str, grupo: str, sent: str):
             v = s.agregar_vehiculo(tipo, grupo, sent)
-            guardar(s)              # JSON: permite reanudar la sesión
-            escribir_csv()          # CSV: legible sin la app, siempre al día
+            ok = persistir()
             actualizar()
-            avisar(f"Caso registrado · {v.descripcion()}", T.ENTRADA)
+            if ok:
+                avisar(f"Caso registrado · {v.descripcion()}", T.ENTRADA)
+            else:
+                avisar(f"Registrado, pero SIN GUARDAR · {v.descripcion()}",
+                       T.ERROR)
 
         def handler_boton(tipo: str, grupo: str, sent: str):
             async def _h(e):
@@ -348,8 +369,7 @@ async def _app(page: ft.Page):
         async def on_deshacer(e):
             v = s.deshacer()
             if v is not None:
-                guardar(s)
-                escribir_csv()
+                persistir()
                 actualizar()
                 avisar(f"Registro anulado · {v.descripcion()}", T.SALIDA)
 
@@ -459,7 +479,7 @@ async def _app(page: ft.Page):
                     ft.Text("Último registro:", size=11, color=T.TEXTO_3),
                     w_ultimo,
                 ]),
-                w_estado_csv,
+                w_estado,
                 ft.Row(spacing=8, controls=[btn_deshacer, btn_finalizar]),
             ]),
         )
@@ -590,8 +610,13 @@ async def _app(page: ft.Page):
             cerrar_dialogo()
             await _exportar_y_cerrar()
 
-        detalle = (f"Se guardarán los {n} registros y se enviarán a la planilla."
-                   if n else "No hay registros en esta sesión.")
+        if n:
+            detalle = f"Se guardarán los {n} registros y se enviarán a la planilla."
+        elif s.vehiculos:
+            detalle = ("Todos los registros están anulados. Se enviarán igual, "
+                       "para que la planilla también los marque como anulados.")
+        else:
+            detalle = "No hay registros en esta sesión."
         abrir_dialogo(ft.AlertDialog(
             modal=True,
             title=ft.Row(spacing=8, controls=[
@@ -622,12 +647,16 @@ async def _app(page: ft.Page):
 
     async def _exportar_y_cerrar():
         s = sesion[0]
-        if not s.vigentes():
+        if not s.vehiculos:
             # Sin registros no hay nada que exportar, pero igual se cierra.
+            # Se mira `vehiculos` y no `vigentes()`: si todo quedó anulado,
+            # igual hay que enviarlo para corregir lo que ya estaba en la
+            # planilla.
             sesion[0] = None
             mostrar_setup()
             return
         try:
+            guardar(s)
             ruta_det = exportar_csv(s)
             ruta_res = exportar_resumen_csv(s)
 
@@ -635,8 +664,20 @@ async def _app(page: ft.Page):
             # botón agrega: los CSV ya venían al día desde cada registro.
             partes = []
             if sheets_configurado():
+                # En un hilo aparte: urllib bloquea hasta 60 s con mala señal,
+                # y en el hilo de la interfaz la app quedaría congelada.
+                abrir_dialogo(ft.AlertDialog(
+                    modal=True,
+                    content=ft.Row(spacing=16, tight=True, controls=[
+                        ft.ProgressRing(width=24, height=24, stroke_width=3,
+                                        color=T.PRIMARIO),
+                        ft.Text("Enviando a la planilla…", size=14),
+                    ])))
                 try:
-                    r = sincronizar_sheets(s)
+                    try:
+                        r = await asyncio.to_thread(sincronizar_sheets, s)
+                    finally:
+                        cerrar_dialogo()
                     partes.append(
                         f"✓ Enviado a la planilla: {r.get('nuevas', 0)} "
                         f"registro(s) nuevo(s), {r.get('actualizadas', 0)} "
@@ -647,7 +688,7 @@ async def _app(page: ft.Page):
                 except Exception as ex_sheets:
                     partes.append(
                         f"⚠ No se pudo enviar a la planilla:\n{ex_sheets}\n\n"
-                        f"Los {s.total()} registros están guardados en el "
+                        f"Los {len(s.vehiculos)} registros están guardados en el "
                         f"teléfono. Vuelve a exportar cuando haya internet: "
                         f"se sube todo lo que falte y no se duplica nada.")
             else:

@@ -2,12 +2,13 @@
  * Webhook de Google Apps Script para la app de Conteo Vehicular Aeroportuario.
  *
  * Recibe el detalle de una sesión y lo escribe en la planilla haciendo UPSERT
- * por veh_id: las filas nuevas se agregan y las que ya estaban se actualizan.
- * Por eso volver a exportar es inocuo — no duplica — y una anulación hecha
- * después de una exportación anterior corrige la fila ya enviada.
+ * por la llave (sesion_id + veh_id): las filas nuevas se agregan y las que ya
+ * estaban se actualizan. Por eso volver a exportar es inocuo — no duplica — y
+ * una anulación hecha después de una exportación anterior corrige la fila ya
+ * enviada.
  *
  * INSTALACIÓN: ver el README (sección "Configurar la planilla de Google").
- * Recuerda que TOKEN debe ser idéntico a _GAS_TOKEN en almacenamiento.py.
+ * Recuerda que TOKEN debe ser idéntico a GAS_TOKEN en config_sheets.py.
  */
 
 // Poner acá el mismo texto que GAS_TOKEN en config_sheets.py.
@@ -15,6 +16,11 @@
 // se escribe aquí: se pone en el editor de Apps Script de la planilla.
 const TOKEN = 'CAMBIA-ESTE-TOKEN';
 const HOJA = 'conteo';
+
+// Columnas que se guardan como TEXTO. Sin esto Sheets interpreta lo que llega
+// como si se tipeara a mano: el id "012345" queda como el número 12345, ya no
+// coincide al reexportar, y la fila se duplica en cada exportación.
+const COLUMNAS_TEXTO = ['sesion_id', 'veh_id'];
 
 
 function doPost(e) {
@@ -31,9 +37,17 @@ function doPost(e) {
 
     const columnas = cuerpo.columnas || [];
     const filas = cuerpo.filas || [];
-    const iClave = columnas.indexOf(cuerpo.clave);
-    if (iClave < 0) {
-      return respuesta({error: 'no encuentro la columna llave: ' + cuerpo.clave});
+
+    // La app nueva manda una lista de columnas llave; las versiones anteriores
+    // mandan solo 'veh_id'. Se aceptan las dos para que un teléfono sin
+    // actualizar siga pudiendo exportar.
+    const nombresClave = Array.isArray(cuerpo.clave) ? cuerpo.clave : [cuerpo.clave];
+    const iClaves = nombresClave.map(function (c) { return columnas.indexOf(c); });
+    if (!iClaves.length || iClaves.indexOf(-1) >= 0) {
+      return respuesta({error: 'no encuentro la columna llave: ' + nombresClave});
+    }
+    function llaveDe(fila) {
+      return iClaves.map(function (i) { return normalizar(fila[i]); }).join('|');
     }
     if (!filas.length) {
       return respuesta({nuevas: 0, actualizadas: 0, total: 0});
@@ -46,8 +60,7 @@ function doPost(e) {
       const avisos = [];
       const hoja = obtenerHoja(columnas, avisos);
 
-      // Se lee TODO el bloque de datos una vez, se modifica en memoria y se
-      // escribe de vuelta en una sola llamada.
+      // Se lee TODO el bloque de datos una vez y se modifica en memoria.
       //
       // Antes se hacía un setValues por cada fila actualizada, y en Apps Script
       // eso es carísimo: reexportar 800 registros eran 800 llamadas, decenas de
@@ -66,42 +79,47 @@ function doPost(e) {
       // confunda con "no está".
       const indice = {};
       for (var i = 0; i < datos.length; i++) {
-        indice[String(datos[i][iClave])] = i + 1;
+        indice[llaveDe(datos[i])] = i + 1;
       }
 
-      const nuevas = [];
-      var actualizadas = 0;
-      var desde = -1, hasta = -1;
+      const base = datos.length;          // filas que ya estaban en la hoja
+      const cambiadas = [];
       for (var j = 0; j < filas.length; j++) {
         const fila = filas[j];
-        const llave = String(fila[iClave]);
+        const llave = llaveDe(fila);
         const encontrado = indice[llave];
         if (encontrado) {
-          const k = encontrado - 1;
-          datos[k] = fila;
-          actualizadas++;
-          if (desde < 0 || k < desde) { desde = k; }
-          if (k > hasta) { hasta = k; }
+          datos[encontrado - 1] = fila;
+          if (encontrado - 1 < base) { cambiadas.push(encontrado - 1); }
         } else {
-          nuevas.push(fila);
+          datos.push(fila);
+          indice[llave] = datos.length;   // por si la llave se repite en el envío
         }
       }
+      const nuevas = datos.length - base;
 
-      // Una sola escritura para todas las actualizaciones: solo el tramo que
-      // realmente cambió, para no reescribir filas de sesiones anteriores.
-      if (actualizadas > 0) {
-        hoja.getRange(2 + desde, 1, hasta - desde + 1, ancho)
-            .setValues(datos.slice(desde, hasta + 1));
+      // Una hoja nueva trae 1000 filas, y getRange no puede pasar de ahí: sin
+      // agrandarla, la exportación que cruza la fila 1000 falla.
+      const necesarias = 1 + datos.length;
+      if (necesarias > hoja.getMaxRows()) {
+        hoja.insertRowsAfter(hoja.getMaxRows(), necesarias - hoja.getMaxRows());
       }
-      if (nuevas.length) {
-        hoja.getRange(2 + datos.length, 1, nuevas.length, ancho)
-            .setValues(nuevas);
+      formatearTexto(hoja, columnas);
+
+      // Las actualizaciones se escriben por tramos de filas CONTIGUAS. Un solo
+      // tramo de la primera a la última reescribiría también las filas de otros
+      // teléfonos que quedaron intercaladas (convirtiendo en valor cualquier
+      // fórmula que tuvieran); filas sueltas serían una llamada por fila.
+      // Una sesión suele estar en uno o pocos tramos.
+      escribirTramos(hoja, datos, cambiadas, ancho);
+      if (nuevas) {
+        hoja.getRange(2 + base, 1, nuevas, ancho).setValues(datos.slice(base));
       }
 
       return respuesta({
-        nuevas: nuevas.length,
-        actualizadas: actualizadas,
-        total: datos.length + nuevas.length,
+        nuevas: nuevas,
+        actualizadas: cambiadas.length,
+        total: datos.length,
         aviso: avisos.join(' ')
       });
     } finally {
@@ -114,12 +132,56 @@ function doPost(e) {
 
 
 /**
+ * Texto comparable de una celda llave. Las filas escritas antes de existir
+ * COLUMNAS_TEXTO pueden haber quedado como número ("123456" → 123456); String()
+ * las devuelve iguales siempre que no tuvieran un cero inicial.
+ */
+function normalizar(x) {
+  return String(x).trim();
+}
+
+
+function formatearTexto(hoja, columnas) {
+  const filas = hoja.getMaxRows() - 1;
+  if (filas < 1) { return; }
+  COLUMNAS_TEXTO.forEach(function (c) {
+    const i = columnas.indexOf(c);
+    if (i >= 0) {
+      hoja.getRange(2, i + 1, filas, 1).setNumberFormat('@');
+    }
+  });
+}
+
+
+function escribirTramos(hoja, datos, indices, ancho) {
+  if (!indices.length) { return; }
+  indices.sort(function (a, b) { return a - b; });
+  var desde = indices[0], previo = indices[0];
+  for (var n = 1; n <= indices.length; n++) {
+    const k = indices[n];
+    if (n < indices.length && k === previo) { continue; }   // repetida
+    if (n < indices.length && k === previo + 1) {
+      previo = k;
+      continue;
+    }
+    hoja.getRange(2 + desde, 1, previo - desde + 1, ancho)
+        .setValues(datos.slice(desde, previo + 1));
+    desde = previo = k;
+  }
+}
+
+
+/**
  * Devuelve la hoja de destino con los encabezados correctos.
  *
  * Si la hoja existe pero sus encabezados NO coinciden con las columnas que manda
  * la app (pasa cuando cambia el modelo de datos), la hoja vieja se ARCHIVA con
  * otro nombre y se crea una nueva. Escribir igual desalinearía todas las filas
  * nuevas en silencio, y borrarla perdería los datos anteriores.
+ *
+ * Solo se comparan las primeras columnas, tantas como manda la app: una columna
+ * agregada a mano a la derecha (una fórmula, una nota) no debe archivar la hoja.
+ * La app solo escribe esas primeras columnas, así que las de más se conservan.
  *
  * `avisos` es un arreglo donde se deja constancia, para que la app lo muestre.
  */
@@ -128,10 +190,10 @@ function obtenerHoja(columnas, avisos) {
   var hoja = libro.getSheetByName(HOJA);
 
   if (hoja && hoja.getLastRow() > 0) {
-    const actuales = hoja.getRange(1, 1, 1, hoja.getLastColumn())
+    const ancho = Math.max(columnas.length, 1);
+    const actuales = hoja.getRange(1, 1, 1, ancho)
                          .getValues()[0]
-                         .map(function (x) { return String(x).trim(); })
-                         .filter(function (x) { return x !== ''; });
+                         .map(function (x) { return String(x).trim(); });
     if (actuales.join('|') !== columnas.join('|')) {
       var nombreArchivo = HOJA + '_antigua';
       var n = 2;
@@ -179,7 +241,8 @@ function probar() {
                 'Izquierda', '10:00:00',
                 '2026-07-29T10:00:00', 'fila de prueba', 'No'];
   const salida = doPost({postData: {contents: JSON.stringify({
-    token: TOKEN, clave: 'veh_id', columnas: columnas, filas: [fila]
+    token: TOKEN, clave: ['sesion_id', 'veh_id'], columnas: columnas,
+    filas: [fila]
   })}});
   Logger.log(salida.getContent());
 }

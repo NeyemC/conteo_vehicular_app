@@ -9,8 +9,8 @@ La sincronización con la planilla, en cambio, ocurre solo al exportar: necesita
 internet y en terreno puede no haber.
 
 En Android se intenta escribir en Descargas (ver `_candidatas`), que es la única
-carpeta que el encuestador puede alcanzar; si falta el permiso se cae a la
-carpeta interna del app, que siempre funciona pero no se ve desde afuera.
+carpeta que el encuestador puede alcanzar; si no se puede, se cae a la carpeta
+interna del app, que siempre funciona pero no se ve desde afuera.
 En Windows/Mac se usa ~/conteo_vehicular.
 """
 
@@ -48,9 +48,10 @@ def _candidatas(ruta_modulo: str) -> list[tuple[Path, bool]]:
         raiz_app, paquete = Path(m.group(1)), m.group(2)
         lista += [
             # Descargas primero: es la carpeta que el encuestador sabe abrir y la
-            # que aparece al conectar el teléfono por cable. Exige el permiso
-            # "Acceso a todos los archivos" (ver README); si no está concedido,
-            # el mkdir falla y se sigue con las siguientes.
+            # que aparece al conectar el teléfono por cable. Desde Android 11 la
+            # app puede crear ahí sus propios archivos sin permisos especiales
+            # (verificado en un SM-A176B); si aun así falla, se sigue con las
+            # siguientes.
             (Path("/storage/emulated/0/Download") / NOMBRE_CARPETA, True),
             (Path("/sdcard/Download") / NOMBRE_CARPETA, True),
             (Path("/storage/emulated/0/Documents") / NOMBRE_CARPETA, True),
@@ -132,10 +133,28 @@ def ruta_sesion(sesion_id: str) -> Path:
     return CARPETA_DATOS / f"sesion_{sesion_id}.json"
 
 
+def _reemplazar_atomico(ruta: Path, escribir, **kw_open) -> Path:
+    """
+    Escribe primero en un temporal y después reemplaza.
+
+    El JSON y el CSV de detalle se reescriben en cada registro, así que un
+    cierre de la app a media escritura podría dejarlos truncados; un JSON
+    truncado, además, hace que la sesión desaparezca de "continuar". Con el
+    reemplazo, o queda el archivo anterior completo o el nuevo completo.
+    """
+    tmp = ruta.with_suffix(ruta.suffix + ".tmp")
+    with open(tmp, "w", **kw_open) as f:
+        escribir(f)
+    os.replace(tmp, ruta)
+    return ruta
+
+
 def guardar(sesion: SesionConteo):
     """Guarda la sesión completa como JSON (sobreescribe si existe)."""
-    with open(ruta_sesion(sesion.id), "w", encoding="utf-8") as f:
-        json.dump(sesion.to_dict(), f, ensure_ascii=False, indent=2)
+    _reemplazar_atomico(
+        ruta_sesion(sesion.id),
+        lambda f: json.dump(sesion.to_dict(), f, ensure_ascii=False, indent=2),
+        encoding="utf-8")
 
 
 def cargar(sesion_id: str) -> SesionConteo | None:
@@ -174,6 +193,9 @@ def listar_sesiones() -> list[dict]:
                 "encuestador": d["encuestador"],
                 "fecha": d["fecha"],
                 "total": sum(1 for v in vehiculos if not v["anulado"]),
+                # Incluye los anulados: una sesión con todo anulado igual
+                # puede tener filas en la planilla que hay que corregir.
+                "registros": len(vehiculos),
                 "ultima_actividad": max(marcas) if marcas else d["fecha"],
             })
         except Exception:
@@ -222,20 +244,11 @@ def _fila_detalle(sesion: SesionConteo, v: Vehiculo) -> dict:
 
 
 def _escribir_csv(ruta: Path, columnas: list[str], filas) -> Path:
-    """
-    Escribe primero en un temporal y después reemplaza.
-
-    El CSV de detalle se reescribe en cada registro, así que un cierre de la app
-    a media escritura podría dejarlo truncado. Con el reemplazo, o queda el
-    archivo anterior completo o el nuevo completo, nunca uno a medias.
-    """
-    tmp = ruta.with_suffix(ruta.suffix + ".tmp")
-    with open(tmp, "w", newline="", encoding="utf-8-sig") as f:
+    def escribir(f):
         writer = csv.DictWriter(f, fieldnames=columnas)
         writer.writeheader()
         writer.writerows(filas)
-    os.replace(tmp, ruta)
-    return ruta
+    return _reemplazar_atomico(ruta, escribir, newline="", encoding="utf-8-sig")
 
 
 def exportar_csv(sesion: SesionConteo) -> Path:
@@ -286,14 +299,11 @@ def exportar_resumen_csv(sesion: SesionConteo) -> Path:
 # ---------------------------------------------------------------------------
 # Sincronización con Google Sheets (opcional)
 # ---------------------------------------------------------------------------
-# CONFIGURAR ANTES DE TERRENO (ver apps_script.gs y el README):
-#   1. Pegar en _GAS_URL la URL /exec del Apps Script desplegado sobre la
-#      planilla de ESTE estudio. Mientras esté vacía la app exporta solo a CSV
-#      y no menciona Sheets.
-#   2. _GAS_TOKEN debe ser idéntico al TOKEN del script, para que nadie que
-#      encuentre la URL pueda escribir en la planilla.
-# Las credenciales viven en config_sheets.py, que NO va al repositorio: el repo
-# es público y con la URL más el token cualquiera podría escribir en la planilla.
+# CONFIGURAR ANTES DE TERRENO (ver apps_script.gs y el README): las
+# credenciales viven en config_sheets.py, que NO va al repositorio: el repo es
+# público y con la URL más el token cualquiera podría escribir en la planilla.
+#   - GAS_URL: la URL /exec del Apps Script desplegado sobre la planilla.
+#   - GAS_TOKEN: idéntico al TOKEN del script.
 # Si el archivo no está, la app exporta solo a CSV y lo indica en el Resumen.
 # Ver config_sheets.ejemplo.py.
 _GAS_URL = ""
@@ -303,12 +313,17 @@ try:
 except Exception:
     pass
 
-# Se sincroniza el DETALLE, no el resumen: cada fila tiene un veh_id único, así
+# Se sincroniza el DETALLE, no el resumen: cada fila tiene una llave única, así
 # que el script puede hacer upsert y volver a exportar es inocuo. Eso permite
 # sincronizar varias veces durante la jornada como respaldo, y que una anulación
 # posterior corrija la fila ya enviada en vez de duplicarla. El resumen se
 # reconstruye en la planilla con una tabla dinámica.
-_CLAVE_SYNC = "veh_id"
+#
+# La llave es sesion_id + veh_id, no veh_id solo: el veh_id tiene 6 caracteres
+# hex y es único dentro de la sesión, pero en una planilla con miles de filas
+# de muchas sesiones dos vehículos distintos chocarían, y el segundo pisaría al
+# primero sin aviso (con 5000 filas, ~50% de probabilidad).
+_CLAVE_SYNC = ["sesion_id", "veh_id"]
 
 
 def sheets_configurado() -> bool:
@@ -325,7 +340,7 @@ def sincronizar_sheets(sesion: SesionConteo) -> dict:
 
     if not _GAS_URL:
         raise RuntimeError(
-            "No hay URL de Google Apps Script configurada en almacenamiento.py")
+            "No hay URL de Google Apps Script configurada en config_sheets.py")
 
     filas = [[str(_fila_detalle(sesion, v)[col]) for col in COLUMNAS_DETALLE]
              for v in sorted(sesion.vehiculos, key=lambda v: v.registrado_en)]
