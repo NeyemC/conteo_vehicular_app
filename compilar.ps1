@@ -12,6 +12,10 @@
 #      sincronizacion, lo que solo se nota mirando el dialogo Resumen.
 #   3. Pasar --org cl.indata. Sin eso el paquete queda com.flet.* y Android lo
 #      instala como una app DISTINTA en vez de actualizar la que ya esta.
+#   4. Firmar con la clave propia de la app (desde la 1.1.0). Un APK con otra
+#      firma -la debug de este PC, por ejemplo- no se instala encima del que
+#      ya esta en el telefono. La clave NO esta en el repo: se copia desde el
+#      PC donde se creo (ver README) a %USERPROFILE%\conteo_vehicular_firma.
 #
 # Uso:   .\compilar.ps1
 #
@@ -21,6 +25,9 @@ $ErrorActionPreference = "Stop"
 
 $fuente = $PSScriptRoot
 $taller = Join-Path $env:USERPROFILE "builds\conteo_vehicular_app"
+$firma  = if ($env:FIRMA_DIR) { $env:FIRMA_DIR } else { Join-Path $env:USERPROFILE "conteo_vehicular_firma" }
+$jks    = Join-Path $firma "conteo_vehicular_release.jks"
+$clave  = Join-Path $firma "password.txt"
 
 Write-Host "== Conteo Vehicular: compilacion del APK ==" -ForegroundColor Cyan
 Write-Host "fuente: $fuente"
@@ -55,6 +62,14 @@ if ($faltan.Count -gt 0) {
     exit 1
 }
 
+if (-not ((Test-Path $jks) -and (Test-Path $clave))) {
+    Write-Host ""
+    Write-Host "FALTA LA CLAVE DE FIRMA en $firma" -ForegroundColor Red
+    Write-Host "Copia ahi conteo_vehicular_release.jks y password.txt (ver README)." -ForegroundColor Yellow
+    Write-Host "Sin ella el APK saldria con otra firma y no se instalaria encima." -ForegroundColor Yellow
+    exit 1
+}
+
 New-Item -ItemType Directory -Force -Path $taller | Out-Null
 foreach ($m in $modulos) { Copy-Item (Join-Path $fuente $m) $taller -Force }
 Remove-Item (Join-Path $taller "assets") -Recurse -Force -ErrorAction SilentlyContinue
@@ -70,6 +85,10 @@ $version = "1.1.0"
 $numero  = Get-Date -Format "yyMMddHH"
 Write-Host "version $version, compilacion $numero"
 
+$pass = (Get-Content $clave -Raw).Trim()
+$env:FLET_ANDROID_SIGNING_KEY_STORE_PASSWORD = $pass
+$env:FLET_ANDROID_SIGNING_KEY_PASSWORD = $pass
+
 Push-Location $taller
 try {
     Write-Host ""
@@ -82,10 +101,14 @@ try {
         --android-permissions android.permission.MANAGE_EXTERNAL_STORAGE=true `
         --android-adaptive-icon-background "#FFFFFF" `
         --splash-color "#000000" `
-        --splash-dark-color "#000000"
+        --splash-dark-color "#000000" `
+        --android-signing-key-store $jks `
+        --android-signing-key-alias upload
     $codigo = $LASTEXITCODE
 } finally {
     Pop-Location
+    Remove-Item Env:FLET_ANDROID_SIGNING_KEY_STORE_PASSWORD -ErrorAction SilentlyContinue
+    Remove-Item Env:FLET_ANDROID_SIGNING_KEY_PASSWORD -ErrorAction SilentlyContinue
 }
 
 Write-Host ""
@@ -107,5 +130,4 @@ Write-Host "APK listo:" -ForegroundColor Green
 Write-Host "  $($apk.FullName)"
 Write-Host "  $([math]::Round($apk.Length / 1MB)) MB"
 Write-Host ""
-Write-Host "Antes de instalar: desinstala la version anterior del telefono si su" -ForegroundColor Yellow
-Write-Host "paquete era distinto (com.flet.*), o quedaran dos iconos iguales." -ForegroundColor Yellow
+Write-Host "Instalar encima con: adb install -r `"$($apk.FullName)`"" -ForegroundColor Yellow

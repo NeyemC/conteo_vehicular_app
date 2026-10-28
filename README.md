@@ -18,7 +18,8 @@ APK Android).
 | `main.py` | Interfaz Flet: pantalla inicial, grilla de conteo, resumen y cierre |
 | `apps_script.gs` | Script que va pegado en la planilla de Google (no se ejecuta acá) |
 | `config_sheets.ejemplo.py` | Plantilla de `config_sheets.py` (URL y token, fuera del repo) |
-| `compilar.ps1` | Compila el APK en Windows con los parámetros correctos |
+| `build_apk.sh` | Compila el APK firmado en Linux desde el commit actual |
+| `compilar.ps1` | Lo mismo, en Windows |
 | `pruebas/` | Pruebas de la lógica, sin interfaz |
 | `assets/icon.png` | Icono de la app, 1024×1024. Flet lo toma de aquí por convención |
 | `assets/splash.png` | Pantalla de carga, 1152×1152. Idem: por convención |
@@ -267,11 +268,11 @@ ni red, y no se empaquetan en el APK.
 
 ## Compilar el APK
 
-> ### Tres reglas que no son opcionales
+> ### Cuatro reglas que no son opcionales
 >
-> Estas tres cosas costaron una tarde de depuración. Saltarse cualquiera produce
-> un fallo que **no** se parece a su causa. `compilar.ps1` se encarga de las
-> tres: es la forma recomendada de compilar.
+> Estas cosas costaron una tarde de depuración. Saltarse cualquiera produce
+> un fallo que **no** se parece a su causa. `build_apk.sh` y `compilar.ps1` se
+> encargan de todas: son la forma recomendada de compilar.
 >
 > **1. Compilar FUERA de OneDrive.** OneDrive bloquea archivos mientras Gradle
 > escribe los miles de intermedios de `build/`, y la compilación muere con
@@ -290,24 +291,58 @@ ni red, y no se empaquetan en el APK.
 > `com.flet.conteo_vehicular_app` en vez de `cl.indata.conteo_vehicular_app`, y
 > al instalar aparece como una **app distinta** al lado de la anterior en vez
 > de actualizarla. Muy fácil de no notar, y lleva a probar la app equivocada.
+>
+> **4. Firmar siempre con la clave de la app.** Android solo instala una versión
+> encima de otra si las dos llevan la misma firma. Sin clave propia, Flet firma
+> con la clave *debug* del PC que compila, que es distinta en cada PC: hasta la
+> 1.0.0 la app iba firmada con la del PC con Windows, y para pasar a la clave
+> propia (1.1.0) hubo que desinstalar una vez. Los dos scripts se niegan a
+> compilar sin la clave.
+
+### La clave de firma
+
+Vive **fuera del repo**, en `~/In-data/conteo_vehicular_firma/` del equipo
+Linux donde se creó (28-10-2026): `conteo_vehicular_release.jks` (alias
+`upload`) y `password.txt`. Hay que respaldar los dos fuera de ese PC. **Si se
+pierden, la siguiente versión no se podrá instalar encima**: habrá que
+desinstalar en cada teléfono, y la app deja de ver sus archivos anteriores en
+Descargas. Para compilar en Windows, copiarlos a
+`%USERPROFILE%\conteo_vehicular_firma\`.
+
+### En Linux
+
+```bash
+./build_apk.sh
+```
+
+Exige que no haya cambios sin commitear, así cada APK corresponde a un commit
+exacto. Compila desde una copia limpia en `../conteo_vehicular_build/` y deja
+el APK como `conteo_vehicular_v<versión>_<commit>.apk`. Usa el Flet 0.85.3 de
+`~/.venvs/timer_aeropuerto` (otro se indica con `FLET=...`); el JDK y el SDK de
+Android los instala Flet solo la primera vez.
+
+### En Windows
 
 Requisitos (verificados con `flutter doctor`): Android SDK 36.1.0 OK. El aviso
 de *Visual Studio not installed* solo afecta compilar para Windows escritorio,
 **no** el APK. Ojo: `flet build` usa su **propio** Flutter (3.41.7), no el que
 esté en el PATH del sistema.
 
-En **PowerShell**, desde la carpeta del repo:
+En **PowerShell**, desde la carpeta del repo, con la clave ya copiada:
 
 ```powershell
 .\compilar.ps1
 ```
 
-Al terminar imprime la ruta del APK. Lo que ejecuta por dentro, desde la copia
-fuera de OneDrive, es:
+Al terminar imprime la ruta del APK. Lo que ejecutan los dos scripts por
+dentro, desde la copia limpia, es:
 
-```powershell
-flet build apk --org cl.indata --product "Conteo Vehicular" --build-version 1.1.0 --build-number <aaMMddHH> --android-permissions android.permission.MANAGE_EXTERNAL_STORAGE=true --android-adaptive-icon-background "#FFFFFF" --splash-color "#000000" --splash-dark-color "#000000"
 ```
+flet build apk --org cl.indata --product "Conteo Vehicular" --build-version 1.1.0 --build-number <aaMMddHH> --android-permissions android.permission.MANAGE_EXTERNAL_STORAGE=true --android-adaptive-icon-background "#FFFFFF" --splash-color "#000000" --splash-dark-color "#000000" --android-signing-key-store <jks> --android-signing-key-alias upload
+```
+
+con las contraseñas en `FLET_ANDROID_SIGNING_KEY_STORE_PASSWORD` y
+`FLET_ANDROID_SIGNING_KEY_PASSWORD`.
 
 La primera compilación se demora bastante (baja dependencias de Gradle y
 Flutter); las siguientes son mucho más rápidas.
@@ -322,9 +357,10 @@ depuración activada también sirve `adb install -r "<ruta del APK>"`.
 |---|---|
 | `--org` | Base del bundle id (queda `cl.indata.conteo_vehicular_app`) |
 | `--product` | Nombre que aparece bajo el icono en el teléfono |
-| `--build-version` | Versión visible (`versionName`). Subirla a mano en `compilar.ps1` con cada cambio relevante |
+| `--build-version` | Versión visible (`versionName`). Subirla a mano en los dos scripts con cada cambio relevante |
 | `--build-number` | `versionCode`. El script pone la fecha y hora de compilación (`aaMMddHH`) |
 | `--android-permissions` | Declara "Acceso a todos los archivos" en el manifest (ver Pendiente) |
+| `--android-signing-key-store` / `-alias` | La clave de firma (ver arriba) |
 | `--android-adaptive-icon-background` | Color con que Android rellena el fondo del adaptive icon |
 | `--splash-color` / `--splash-dark-color` | Fondo de la pantalla de carga, en modo claro y oscuro |
 
@@ -374,12 +410,15 @@ APK (`adb shell pm path …` y `adb pull`) y comparar los `.py` que trae en
 
 - **Implementar el `apps_script.gs` nuevo en la planilla** antes de instalar el
   APK 1.1.0 (ver "Orden al actualizar").
-- **Desinstalar y reinstalar pierde el acceso a los CSV viejos.** Android
-  asocia cada archivo de Descargas a la instalación que lo creó; actualizar
-  (`adb install -r`, o abrir el APK nuevo encima) lo conserva, desinstalar no.
-  Ahí sí haría falta "Acceso a todos los archivos" (Ajustes → Aplicaciones →
-  Conteo Vehicular → Permisos), que va declarado en el manifest pero se concede
-  a mano. Respaldar con `adb pull` antes de desinstalar.
+- **Desinstalar pierde el acceso a los CSV viejos.** Android asocia cada
+  archivo de Descargas a la instalación que lo creó; actualizar (`adb install
+  -r`, o abrir el APK nuevo encima) lo conserva, desinstalar no. Pasó una vez,
+  al cambiar a la clave de firma propia (28-10-2026): las sesiones anteriores
+  quedaron respaldadas en `~/In-data/respaldo_conteo_vehicular_2026-10-28/` y
+  siguen en Descargas, pero la app ya no las lista en "continuar". Para que las
+  vuelva a ver habría que conceder "Acceso a todos los archivos" (Ajustes →
+  Aplicaciones → Conteo Vehicular → Permisos), que va declarado en el manifest
+  pero se concede a mano.
 - **Probar el flujo completo en terreno** con el APK 1.1.0.
 - Confirmar la lista de aeropuertos con los requisitos del estudio.
 - El catálogo no tiene una opción "Otro": si en terreno aparece un vehículo que
