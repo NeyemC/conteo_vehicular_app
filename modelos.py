@@ -2,7 +2,7 @@
 Modelos de datos para la app de conteo vehicular en aeropuertos.
 
 El conteo es por toques: cada botón de la grilla registra un vehículo con su
-tipo, su grupo de ejes y —solo en la posición 5— el sentido. Se guarda el
+tipo, su grupo de ejes y —en las posiciones de dos sentidos— el sentido. Se guarda el
 timestamp absoluto de cada registro, así que cualquier agrupación temporal
 (flujo por hora, por tramos de 15 minutos) se calcula después sobre el CSV.
 """
@@ -36,38 +36,52 @@ GRUPOS_EJES = {
 
 ETIQUETA_EJES = {"2": "2 ejes", "3+": "3 o más ejes"}
 
-# ---------------------------------------------------------------------------
-# Posiciones
-#
-# En la 5 se cuentan los dos sentidos por separado (las dos flechas de la
-# maqueta). En el resto hay un solo flujo y el sentido no aplica.
-# ---------------------------------------------------------------------------
-
-POSICIONES = ["1", "2", "3", "4", "5"]
-POSICION_DOS_SENTIDOS = "5"
-SENTIDOS_DOBLES = ["Izquierda", "Derecha"]
-SIN_SENTIDO = ""
-
-
-def sentidos_de(posicion: str) -> list[str]:
-    """Sentidos a registrar en una posición. Una sola entrada si no aplica."""
-    if str(posicion) == POSICION_DOS_SENTIDOS:
-        return list(SENTIDOS_DOBLES)
-    return [SIN_SENTIDO]
-
-
-def tiene_dos_sentidos(posicion: str) -> bool:
-    return str(posicion) == POSICION_DOS_SENTIDOS
-
-
 AEROPUERTOS = [
     "ANF - Antofagasta",
     "ARI - Arica",
     "BBA - Balmaceda",
+    "CJC - Calama",
     "CPO - Copiapó",
     "LSC - La Serena",
     "PUQ - Punta Arenas",
 ]
+
+
+def codigo_aeropuerto(aeropuerto: str) -> str:
+    """'CJC - Calama' → 'CJC'."""
+    return aeropuerto.split(" - ")[0]
+
+
+# ---------------------------------------------------------------------------
+# Posiciones
+#
+# En las posiciones de dos sentidos se cuentan los dos por separado (las dos
+# flechas de la maqueta). En el resto hay un solo flujo y el sentido no aplica.
+# Cuáles son depende del aeropuerto: en general solo la 5, pero en Calama la
+# 4 también.
+# ---------------------------------------------------------------------------
+
+POSICIONES = ["1", "2", "3", "4", "5"]
+POSICIONES_DOS_SENTIDOS = {"CJC": ("4", "5")}     # código → posiciones
+POSICIONES_DOS_SENTIDOS_DEFECTO = ("5",)
+SENTIDOS_DOBLES = ["Izquierda", "Derecha"]
+SIN_SENTIDO = ""
+
+
+def posiciones_dos_sentidos(aeropuerto: str) -> tuple[str, ...]:
+    return POSICIONES_DOS_SENTIDOS.get(codigo_aeropuerto(aeropuerto),
+                                       POSICIONES_DOS_SENTIDOS_DEFECTO)
+
+
+def tiene_dos_sentidos(posicion: str, aeropuerto: str) -> bool:
+    return str(posicion) in posiciones_dos_sentidos(aeropuerto)
+
+
+def sentidos_de(posicion: str, aeropuerto: str) -> list[str]:
+    """Sentidos a registrar en una posición. Una sola entrada si no aplica."""
+    if tiene_dos_sentidos(posicion, aeropuerto):
+        return list(SENTIDOS_DOBLES)
+    return [SIN_SENTIDO]
 
 
 def etiqueta_tipo(tipo: str) -> str:
@@ -213,10 +227,10 @@ class SesionConteo:
         return None
 
     def sentidos(self) -> list[str]:
-        return sentidos_de(self.posicion)
+        return sentidos_de(self.posicion, self.aeropuerto)
 
     def dos_sentidos(self) -> bool:
-        return tiene_dos_sentidos(self.posicion)
+        return tiene_dos_sentidos(self.posicion, self.aeropuerto)
 
     def total_sentido(self, sentido: str) -> int:
         return sum(1 for v in self.vigentes() if v.sentido == sentido)

@@ -64,6 +64,23 @@ class Modelo(unittest.TestCase):
             b = s.agregar_vehiculo("bus", "2")
         self.assertEqual((a.id, b.id), ("AAAAAA", "BBBBBB"))
 
+    def test_posiciones_de_dos_sentidos_segun_aeropuerto(self):
+        # En Calama la 4 y la 5; en el resto solo la 5.
+        for aero, dobles in (("CJC - Calama", {"4", "5"}),
+                             ("ANF - Antofagasta", {"5"}),
+                             ("PUQ - Punta Arenas", {"5"})):
+            for p in M.POSICIONES:
+                with self.subTest(aero=aero, posicion=p):
+                    s = M.SesionConteo(aero, "x", p)
+                    self.assertEqual(s.dos_sentidos(), p in dobles)
+                    self.assertEqual(s.sentidos(),
+                                     M.SENTIDOS_DOBLES if p in dobles
+                                     else [M.SIN_SENTIDO])
+
+    def test_calama_en_la_lista(self):
+        self.assertIn("CJC - Calama", M.AEROPUERTOS)
+        self.assertEqual(M.AEROPUERTOS, sorted(M.AEROPUERTOS))
+
     def test_deshacer_anula_el_ultimo_vigente(self):
         s = M.SesionConteo("ANF - Antofagasta", "x", "5")
         s.agregar_vehiculo("bus", "2", "Izquierda")

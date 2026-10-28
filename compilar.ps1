@@ -81,7 +81,7 @@ Write-Host "Copiados $($modulos.Count) modulos + assets/" -ForegroundColor Green
 # versionCode mayor que el anterior, y `adb shell dumpsys package` dice de
 # cuando es el que esta instalado. Antes todos salian como 1 / 1.0.0 y no
 # habia forma de distinguirlos sin abrir el APK.
-$version = "1.1.0"
+$version = "1.2.0"
 $numero  = Get-Date -Format "yyMMddHH"
 Write-Host "version $version, compilacion $numero"
 

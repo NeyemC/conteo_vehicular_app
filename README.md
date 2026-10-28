@@ -44,11 +44,23 @@ El catálogo se define en un solo lugar, `TIPOS_VEHICULO` y `GRUPOS_EJES` en
 
 ### Posiciones y sentido
 
-Hay 5 posiciones de conteo. En las posiciones 1 a 4 hay un solo flujo y el
-sentido no se registra. En la **posición 5** se cuentan los dos sentidos por
+Hay 5 posiciones de conteo. En la mayoría hay un solo flujo y el sentido no se
+registra. En las **posiciones de dos sentidos** se cuentan los dos por
 separado: la grilla aparece dos veces, una para **Izquierda** y otra para
-**Derecha**, cada una con su total. Como no cabe en pantalla con las medidas
-normales, la posición 5 usa una versión compacta (ver `MEDIDAS` en `tema.py`).
+**Derecha**, cada una con su total. Cuáles son depende del aeropuerto:
+
+| Aeropuerto | Posiciones de dos sentidos |
+|---|---|
+| CJC - Calama | 4 y 5 |
+| Todos los demás | 5 |
+
+Se define en `POSICIONES_DOS_SENTIDOS` en `modelos.py`, y la nota de la
+pantalla inicial se ajusta al aeropuerto elegido. Como dos grillas no caben en
+pantalla con las medidas normales, esas posiciones usan una versión compacta
+(ver `MEDIDAS` en `tema.py`).
+
+Aeropuertos: ANF Antofagasta, ARI Arica, BBA Balmaceda, CJC Calama,
+CPO Copiapó, LSC La Serena y PUQ Punta Arenas (`AEROPUERTOS` en `modelos.py`).
 
 ## Flujo de uso
 
@@ -350,7 +362,7 @@ Al terminar imprime la ruta del APK. Lo que ejecutan los dos scripts por
 dentro, desde la copia limpia, es:
 
 ```
-flet build apk --org cl.indata --product "Conteo Vehicular" --build-version 1.1.0 --build-number <aaMMddHH> --android-permissions android.permission.MANAGE_EXTERNAL_STORAGE=true --android-adaptive-icon-background "#FFFFFF" --splash-color "#000000" --splash-dark-color "#000000" --android-signing-key-store <jks> --android-signing-key-alias upload
+flet build apk --org cl.indata --product "Conteo Vehicular" --build-version 1.2.0 --build-number <aaMMddHH> --android-permissions android.permission.MANAGE_EXTERNAL_STORAGE=true --android-adaptive-icon-background "#FFFFFF" --splash-color "#000000" --splash-dark-color "#000000" --android-signing-key-store <jks> --android-signing-key-alias upload
 ```
 
 con las contraseñas en `FLET_ANDROID_SIGNING_KEY_STORE_PASSWORD` y

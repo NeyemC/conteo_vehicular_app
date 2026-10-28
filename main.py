@@ -3,7 +3,8 @@ App de Conteo Vehicular Aeroportuario
 
 El conteo es por toques: la pantalla principal es una grilla de botones, uno por
 combinación de tipo y grupo de ejes. Cada toque registra un vehículo. En la
-posición 5 la grilla se duplica, un bloque por sentido.
+las posiciones de dos sentidos (la 5, y en Calama también la 4) la grilla se
+duplica, un bloque por sentido.
 """
 
 import asyncio
@@ -17,7 +18,7 @@ _ERROR_ARRANQUE = None
 try:
     import tema as T
     from modelos import (SesionConteo, GRUPOS_EJES, POSICIONES, AEROPUERTOS,
-                         etiqueta_tipo)
+                         etiqueta_tipo, posiciones_dos_sentidos)
     from almacenamiento import (guardar, cargar, listar_sesiones,
                                 exportar_csv, exportar_resumen_csv,
                                 sincronizar_sheets, sheets_configurado,
@@ -42,6 +43,15 @@ def _borde(w, color):
     return ft.Border(left=s, top=s, right=s, bottom=s)
 
 
+def _firma() -> ft.Container:
+    """Pie de autoría, centrado al final de cada pantalla."""
+    tema = globals().get("T")
+    return ft.Container(
+        alignment=ft.Alignment(0, 0), padding=ft.Padding(0, 8, 0, 4),
+        content=ft.Text("Developed with ❤️ by Neyem Cares", size=11,
+                        color=getattr(tema, "TEXTO_3", "#9A9AA6")))
+
+
 def _pantalla_error(page: ft.Page, titulo: str, detalle: str):
     """
     Muestra el error en pantalla. Sin esto, cualquier excepción al arrancar deja
@@ -56,7 +66,7 @@ def _pantalla_error(page: ft.Page, titulo: str, detalle: str):
     page.padding = 0
     page.floating_action_button = None
     page.controls.clear()
-    page.controls.append(ft.Container(
+    page.controls.append(ft.SafeArea(expand=True, content=ft.Container(
         expand=True,
         padding=ft.Padding(20, 28, 20, 20),
         content=ft.Column(spacing=14, scroll=ft.ScrollMode.AUTO, controls=[
@@ -76,7 +86,7 @@ def _pantalla_error(page: ft.Page, titulo: str, detalle: str):
                                 font_family="monospace",
                                 color=color("TEXTO", "#F2F2F6"))),
         ]),
-    ))
+    )))
     page.update()
 
 
@@ -134,9 +144,24 @@ async def _app(page: ft.Page):
                      for p in POSICIONES],
             border_radius=12,
             leading_icon=ft.Icons.PLACE)
+        # Qué posiciones cuentan los dos sentidos depende del aeropuerto
+        # (en Calama son la 4 y la 5), así que la nota se ajusta al elegirlo.
+        def texto_nota(aeropuerto: str | None) -> str:
+            pos = posiciones_dos_sentidos(aeropuerto or "")
+            if len(pos) == 1:
+                return f"La posición {pos[0]} cuenta los dos sentidos por separado."
+            lista = ", ".join(pos[:-1]) + " y " + pos[-1]
+            return f"Las posiciones {lista} cuentan los dos sentidos por separado."
+
         nota_pos = ft.Text(
-            "La posición 5 cuenta los dos sentidos por separado.",
+            texto_nota(None),
             size=11, color=T.TEXTO_3, text_align=ft.TextAlign.CENTER)
+
+        async def al_elegir_aeropuerto(e):
+            nota_pos.value = texto_nota(dd_aero.value)
+            page.update()
+
+        dd_aero.on_select = al_elegir_aeropuerto
         error = ft.Text("", color=T.ERROR, size=13)
 
         async def iniciar(e):
@@ -230,10 +255,10 @@ async def _app(page: ft.Page):
         page.floating_action_button = None
         page.bgcolor = T.FONDO
         page.controls.clear()
-        page.controls.append(
+        page.controls.append(ft.SafeArea(expand=True, content=
             ft.Container(
                 expand=True, alignment=ft.Alignment(0, -1),
-                padding=ft.Padding(32, 44, 32, 44),
+                padding=ft.Padding(32, 28, 32, 16),
                 content=ft.Column(
                     horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                     spacing=18, scroll=ft.ScrollMode.AUTO,
@@ -270,10 +295,11 @@ async def _app(page: ft.Page):
                                 bgcolor=T.PRIMARIO,
                                 color=T.TEXTO_SOBRE_ACENTO)),
                         *bloque_reanudar,
+                        _firma(),
                     ],
                 ),
             )
-        )
+        ))
         page.update()
 
     # ══════════════════════════════════════════════════════════════════════
@@ -375,8 +401,8 @@ async def _app(page: ft.Page):
 
         btn_deshacer.on_click = on_deshacer
 
-        # La posición 5 dibuja la grilla dos veces y con las medidas amplias no
-        # cabe en pantalla; en las posiciones 1-4 sobra espacio y los botones
+        # Con dos sentidos la grilla se dibuja dos veces y con las medidas
+        # amplias no cabe en pantalla; con uno sobra espacio y los botones
         # van más grandes, que se tocan mejor en terreno.
         M = T.medidas(s.dos_sentidos())
 
@@ -496,16 +522,19 @@ async def _app(page: ft.Page):
         page.floating_action_button = None
         page.bgcolor = T.FONDO
         page.controls.clear()
-        page.controls.append(
+        # SafeArea: sin ella el encabezado queda debajo de la barra de estado
+        # de Android, encimado con el reloj y los íconos.
+        page.controls.append(ft.SafeArea(expand=True, content=
             ft.Column(expand=True, spacing=0, controls=[
                 encabezado,
                 ft.Container(
                     expand=True,
                     padding=ft.Padding(pad, pad, pad, pad),
-                    content=ft.Column(spacing=M["sep_bloques"],
-                                      scroll=ft.ScrollMode.AUTO,
-                                      controls=grillas + [pie])),
-            ]))
+                    content=ft.Column(
+                        spacing=M["sep_bloques"],
+                        scroll=ft.ScrollMode.AUTO,
+                        controls=grillas + [pie, _firma()])),
+            ])))
         actualizar()
 
     # ══════════════════════════════════════════════════════════════════════

@@ -40,15 +40,16 @@ COLOR_EJES = {
     "3+": "#FFBE7D",
 }
 
-# ── Sentidos (solo posición 5) ──────────────────────────────────────────────
+# ── Sentidos (posiciones de dos sentidos) ───────────────────────────────────
 COLOR_SENTIDO = {
     "Izquierda": "#6FE39B",
     "Derecha":   "#8FD6FF",
 }
 
 # ── Medidas de la grilla ────────────────────────────────────────────────────
-# La posición 5 dibuja la grilla dos veces, una por sentido, así que con las
-# medidas amplias no cabe en pantalla. En las posiciones 1-4 hay un solo bloque
+# Las posiciones de dos sentidos (la 5, y en Calama también la 4) dibujan la
+# grilla dos veces, una por sentido, así que con las medidas amplias no cabe en
+# pantalla. En las de un solo sentido hay un solo bloque
 # y sobra espacio, así que ahí los botones van más grandes y se tocan mejor.
 MEDIDAS = {
     "amplio": {
