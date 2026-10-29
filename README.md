@@ -442,6 +442,11 @@ APK (`adb shell pm path …` y `adb pull`) y comparar los `.py` que trae en
   la llave nueva y la antigua, y reenviar una sesión ya sincronizada actualizó
   sus 10 filas sin agregar ninguna. Antes se respaldó el código anterior y se
   hizo una copia de la planilla en Drive.
+- ✅ **Sesiones pendientes (1.2.1) probadas en el teléfono** (29-10-2026): con
+  modo avión, finalizar mostró "Sin conexión a internet…" y la tarjeta quedó en
+  "Falta subir a la planilla"; al quitar el modo avión y reabrir la app, la
+  sesión se subió sola y pasó a "En la planilla". Las filas de prueba se
+  borraron después (la planilla volvió a 15.701 filas).
 - ✅ **Los CSV llegan a Descargas** (verificado el 28-10-2026 en un Samsung
   SM-A176B): `Download/conteo_vehicular` tenía las sesiones de julio y agosto.
   Funcionó **sin** conceder "Acceso a todos los archivos": desde Android 11 una
@@ -466,7 +471,7 @@ APK (`adb shell pm path …` y `adb pull`) y comparar los `.py` que trae en
   vuelva a ver habría que conceder "Acceso a todos los archivos" (Ajustes →
   Aplicaciones → Conteo Vehicular → Permisos), que va declarado en el manifest
   pero se concede a mano.
-- **Probar el flujo completo en terreno** con el APK 1.1.0.
+- **Probar el flujo completo en terreno** con el APK 1.2.1.
 - Confirmar la lista de aeropuertos con los requisitos del estudio.
 - El catálogo no tiene una opción "Otro": si en terreno aparece un vehículo que
   no calza en ninguno de los tipos, hoy hay que usar el más cercano.
