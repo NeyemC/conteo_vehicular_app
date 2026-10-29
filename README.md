@@ -86,6 +86,24 @@ dos propiedades que importan en terreno:
 - **Reenviar nunca duplica.** Las filas ya enviadas se actualizan, no se
   repiten.
 
+Si al finalizar no hay señal, el aviso lo dice en palabras simples ("Sin
+conexión a internet, o la señal es muy débil") y la sesión queda **pendiente**.
+Desde la 1.2.1:
+
+- **Cada sesión de "continuar" muestra si ya está en la planilla**: "En la
+  planilla" (verde) o "Falta subir a la planilla" (naranjo). Se calcula
+  comparando la huella guardada en `sesion_<ID>.subida` con lo que hay hoy en
+  el teléfono, así que si después de subir se registra o anula algo, vuelve a
+  quedar pendiente.
+- **Las pendientes se muestran siempre**, aunque no estén entre las 8 más
+  recientes.
+- **Al abrir la app, las pendientes se suben solas** en segundo plano. Si no
+  hay señal se deja de intentar hasta la próxima apertura; también se puede
+  abrir la sesión y finalizarla de nuevo.
+- **Las sesiones creadas antes de la 1.2.1 no muestran estado** ni se suben
+  solas: no tienen marca, y pudieron borrarse de la planilla a propósito
+  (sesiones de prueba). Si hace falta reenviar una, se abre y se finaliza.
+
 Además, cada registro se guarda en el JSON y en el CSV de detalle **en el
 momento**, sin esperar a finalizar. Si un guardado falla (disco lleno, por
 ejemplo) el conteo sigue, la pantalla lo avisa en rojo, y el siguiente guardado
@@ -95,8 +113,9 @@ exitoso incluye lo que faltaba.
 
 Si Android mata la app en segundo plano —los Samsung lo hacen seguido— la
 pantalla inicial ofrece **continuar la sesión anterior**, con su posición,
-hora y cantidad de vehículos. Es también la forma de reintentar el envío de una
-sesión que se finalizó sin señal: se abre y se vuelve a finalizar.
+hora, cantidad de vehículos y si ya está en la planilla. Es también la forma
+de reintentar a mano el envío de una sesión que se finalizó sin señal: se abre
+y se vuelve a finalizar.
 
 Se listan las 8 más recientes con al menos un registro (aunque esté anulado:
 una sesión con todo anulado igual puede tener filas en la planilla que hay que
@@ -184,13 +203,14 @@ Cada carpeta candidata se prueba con una escritura real, no solo con
 está en la lista pero en la práctica falla: el directorio padre solo lo crea el
 sistema.
 
-Tres archivos por sesión:
+Cuatro archivos por sesión:
 
 | Archivo | Cuándo se escribe |
 |---|---|
 | `sesion_<ID>.json` | Tras **cada** registro. Es lo que permite reanudar la sesión. |
 | `conteo_<AERO>_pos<N>_<fecha>_<ID>_detalle.csv` | Tras **cada** registro. Un registro por vehículo, incluidos los anulados. |
 | `conteo_<AERO>_pos<N>_<fecha>_<ID>_resumen.csv` | Al finalizar. Conteos vigentes por sentido × grupo de ejes × tipo. |
+| `sesion_<ID>.subida` | Con el primer registro (vacío) y tras cada envío exitoso: la huella de lo que llegó a la planilla. Ver "Trabajo sin internet". |
 
 Los dos que se reescriben en cada registro se escriben primero en un temporal y
 después se reemplazan, así que un cierre a media escritura nunca deja un archivo
@@ -362,7 +382,7 @@ Al terminar imprime la ruta del APK. Lo que ejecutan los dos scripts por
 dentro, desde la copia limpia, es:
 
 ```
-flet build apk --org cl.indata --product "Conteo Vehicular" --build-version 1.2.0 --build-number <aaMMddHH> --android-permissions android.permission.MANAGE_EXTERNAL_STORAGE=true --android-adaptive-icon-background "#FFFFFF" --splash-color "#000000" --splash-dark-color "#000000" --android-signing-key-store <jks> --android-signing-key-alias upload
+flet build apk --org cl.indata --product "Conteo Vehicular" --build-version 1.2.1 --build-number <aaMMddHH> --android-permissions android.permission.MANAGE_EXTERNAL_STORAGE=true --android-adaptive-icon-background "#FFFFFF" --splash-color "#000000" --splash-dark-color "#000000" --android-signing-key-store <jks> --android-signing-key-alias upload
 ```
 
 con las contraseñas en `FLET_ANDROID_SIGNING_KEY_STORE_PASSWORD` y

@@ -16,7 +16,9 @@ En Windows/Mac se usa ~/conteo_vehicular.
 
 import json
 import csv
+import hashlib
 import os
+import socket
 import re as _re
 import tempfile
 from pathlib import Path
@@ -133,6 +135,11 @@ def ruta_sesion(sesion_id: str) -> Path:
     return CARPETA_DATOS / f"sesion_{sesion_id}.json"
 
 
+def ruta_subida(sesion_id: str) -> Path:
+    """Marca de subida: la huella de lo último que llegó a la planilla."""
+    return CARPETA_DATOS / f"sesion_{sesion_id}.subida"
+
+
 def _reemplazar_atomico(ruta: Path, escribir, **kw_open) -> Path:
     """
     Escribe primero en un temporal y después reemplaza.
@@ -155,6 +162,15 @@ def guardar(sesion: SesionConteo):
         ruta_sesion(sesion.id),
         lambda f: json.dump(sesion.to_dict(), f, ensure_ascii=False, indent=2),
         encoding="utf-8")
+    # Marca vacía = "nada subido todavía" (ver estado_subida). Solo si no
+    # existe: si ya hay una, guarda la huella de lo último que llegó a la
+    # planilla y no hay que perderla.
+    marca = ruta_subida(sesion.id)
+    if not marca.exists():
+        try:
+            _reemplazar_atomico(marca, lambda f: f.write(""), encoding="utf-8")
+        except Exception:
+            pass
 
 
 def cargar(sesion_id: str) -> SesionConteo | None:
@@ -197,6 +213,7 @@ def listar_sesiones() -> list[dict]:
                 # puede tener filas en la planilla que hay que corregir.
                 "registros": len(vehiculos),
                 "ultima_actividad": max(marcas) if marcas else d["fecha"],
+                "subida": estado_subida(SesionConteo.from_dict(d)),
             })
         except Exception:
             pass
@@ -330,6 +347,58 @@ def sheets_configurado() -> bool:
     return bool(_GAS_URL)
 
 
+def _filas_sync(sesion: SesionConteo) -> list[list[str]]:
+    return [[str(_fila_detalle(sesion, v)[col]) for col in COLUMNAS_DETALLE]
+            for v in sorted(sesion.vehiculos, key=lambda v: v.registrado_en)]
+
+
+def _huella(filas: list[list[str]]) -> str:
+    return hashlib.sha256(
+        json.dumps(filas, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+# Estado de subida de cada sesión, para que la app muestre cuáles faltan.
+# Se guarda en un archivo aparte (sesion_<id>.subida) con la huella de las
+# filas que la planilla confirmó, no como un sí/no dentro del JSON:
+#   - lo que cuenta es si lo que hay HOY en el teléfono ya está en la planilla.
+#     Si después de subir se agrega o anula un vehículo, la huella deja de
+#     calzar y la sesión vuelve a quedar pendiente, sin tener que acordarse de
+#     marcarla en cada cambio;
+#   - la subida automática corre en segundo plano y nunca escribe el JSON, así
+#     que no puede pisar registros hechos mientras tanto.
+SUBIDA = "subida"
+PENDIENTE = "pendiente"
+
+
+def estado_subida(sesion: SesionConteo) -> str | None:
+    """
+    SUBIDA, PENDIENTE, o None si no se sabe: las sesiones creadas antes de la
+    1.2.1 no tienen marca. Esas no se reenvían solas, porque pudieron haberse
+    borrado de la planilla a propósito (sesiones de prueba, por ejemplo); se
+    pueden subir igual abriéndolas y finalizando.
+    """
+    try:
+        marca = ruta_subida(sesion.id).read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return None
+    except Exception:
+        return PENDIENTE
+    return SUBIDA if marca == _huella(_filas_sync(sesion)) else PENDIENTE
+
+
+def mensaje_error_sync(ex: Exception) -> str:
+    """Explica un fallo de envío en palabras del encuestador."""
+    import urllib.error
+
+    if isinstance(ex, urllib.error.HTTPError):
+        return (f"La planilla respondió con un error (HTTP {ex.code}). "
+                f"Intenta de nuevo más tarde.")
+    if isinstance(ex, (urllib.error.URLError, TimeoutError, socket.timeout,
+                       ConnectionError, socket.gaierror)):
+        return "Sin conexión a internet, o la señal es muy débil."
+    return str(ex) or type(ex).__name__
+
+
 def sincronizar_sheets(sesion: SesionConteo) -> dict:
     """
     Envía el detalle de la sesión al Apps Script que lo escribe en Sheets.
@@ -342,8 +411,7 @@ def sincronizar_sheets(sesion: SesionConteo) -> dict:
         raise RuntimeError(
             "No hay URL de Google Apps Script configurada en config_sheets.py")
 
-    filas = [[str(_fila_detalle(sesion, v)[col]) for col in COLUMNAS_DETALLE]
-             for v in sorted(sesion.vehiculos, key=lambda v: v.registrado_en)]
+    filas = _filas_sync(sesion)
     if not filas:
         return {"nuevas": 0, "actualizadas": 0, "total": 0}
 
@@ -367,4 +435,12 @@ def sincronizar_sheets(sesion: SesionConteo) -> dict:
         raise RuntimeError(f"Respuesta inesperada del script: {cuerpo[:200]}")
     if isinstance(datos, dict) and datos.get("error"):
         raise RuntimeError(datos["error"])
+
+    # La huella es de las filas ENVIADAS, no de la sesión al terminar: si
+    # mientras tanto se registró otro vehículo, la sesión queda pendiente.
+    try:
+        _reemplazar_atomico(ruta_subida(sesion.id),
+                            lambda f: f.write(_huella(filas)), encoding="utf-8")
+    except Exception:
+        pass    # ya está en la planilla; a lo más se reenvía, sin duplicar
     return datos

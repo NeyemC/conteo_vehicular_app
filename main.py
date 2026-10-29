@@ -22,6 +22,7 @@ try:
     from almacenamiento import (guardar, cargar, listar_sesiones,
                                 exportar_csv, exportar_resumen_csv,
                                 sincronizar_sheets, sheets_configurado,
+                                mensaje_error_sync, SUBIDA, PENDIENTE,
                                 CARPETA_DATOS, CARPETA_ALCANZABLE, CARPETA_ERROR,
                                 EN_DESCARGAS, EN_ANDROID, AYUDA_PERMISO)
 except Exception:
@@ -106,6 +107,9 @@ async def _app(page: ft.Page):
     page.padding = 0
 
     sesion: list[SesionConteo | None] = [None]
+    # Indicador de subida de cada tarjeta de "continuar", por id de sesión, para
+    # que la subida en segundo plano lo actualice sin rehacer la pantalla.
+    insignias: dict[str, ft.Row] = {}
 
     # ── diálogos ──────────────────────────────────────────────────────────
     def abrir_dialogo(dlg): page.show_dialog(dlg)
@@ -202,6 +206,8 @@ async def _app(page: ft.Page):
             hora = str(meta["ultima_actividad"])[11:16]
             detalle = meta["fecha"] + (f" · {hora}" if hora else "")
             detalle += f" · {meta['encuestador']}"
+            insignia = ft.Row(spacing=4, controls=controles_insignia(meta["subida"]))
+            insignias[meta["id"]] = insignia
             async def _abrir(e, sid=meta["id"]):
                 abrir_sesion(sid)
 
@@ -219,6 +225,7 @@ async def _app(page: ft.Page):
                                     size=14, no_wrap=True,
                                     weight=ft.FontWeight.W_600, color=T.TEXTO),
                             ft.Text(detalle, size=11, color=T.TEXTO_3),
+                            insignia,
                         ]),
                         ft.Container(
                             bgcolor=T.con_alfa(T.PRIMARIO, 0.28), border_radius=8,
@@ -233,9 +240,15 @@ async def _app(page: ft.Page):
         try:
             # Por registros y no por vigentes: una sesión con todo anulado
             # puede tener filas en la planilla que falta marcar como anuladas.
-            guardadas = [m for m in listar_sesiones() if m["registros"] > 0][:8]
+            recientes = [m for m in listar_sesiones() if m["registros"] > 0]
         except Exception:
-            guardadas = []
+            recientes = []
+        # Las 8 más recientes, más TODAS las pendientes aunque sean antiguas:
+        # si no, tras varios conteos sin señal una sesión sin subir saldría de
+        # la lista y ya no habría cómo reenviarla desde la app.
+        guardadas = recientes[:8] + [m for m in recientes[8:]
+                                     if m["subida"] == PENDIENTE]
+        insignias.clear()
 
         bloque_reanudar = []
         if guardadas:
@@ -246,8 +259,9 @@ async def _app(page: ft.Page):
                     ft.Text("O continúa una sesión anterior", size=13,
                             weight=ft.FontWeight.W_500, color=T.TEXTO_2),
                 ]),
-                ft.Text("Al exportarla se sincroniza lo que falte en la "
-                        "planilla. Reexportar no duplica.",
+                ft.Text("Al finalizarla se sube lo que falte a la planilla. "
+                        "Reenviar no duplica. Con internet, las pendientes "
+                        "se suben solas al abrir la app.",
                         size=11, color=T.TEXTO_3),
                 *[tarjeta_sesion(m) for m in guardadas],
             ]
@@ -716,10 +730,12 @@ async def _app(page: ft.Page):
                         partes.append("ℹ " + r["aviso"])
                 except Exception as ex_sheets:
                     partes.append(
-                        f"⚠ No se pudo enviar a la planilla:\n{ex_sheets}\n\n"
+                        f"⚠ No se pudo enviar a la planilla:\n"
+                        f"{mensaje_error_sync(ex_sheets)}\n\n"
                         f"Los {len(s.vehiculos)} registros están guardados en el "
-                        f"teléfono. Vuelve a exportar cuando haya internet: "
-                        f"se sube todo lo que falte y no se duplica nada.")
+                        f"teléfono y la sesión queda como pendiente: se sube "
+                        f"sola la próxima vez que abras la app con internet, "
+                        f"o ábrela y finaliza de nuevo. No se duplica nada.")
             else:
                 partes.append("Sin planilla configurada: los datos quedan solo "
                               "en los CSV del teléfono.")
@@ -746,7 +762,50 @@ async def _app(page: ft.Page):
             # pantalla de conteo para no dejar al encuestador sin dónde volver.
             aviso("Error al guardar", f"{ex}\n\nLa sesión sigue abierta.")
 
+    # ══════════════════════════════════════════════════════════════════════
+    # Subida automática de las sesiones pendientes
+    # ══════════════════════════════════════════════════════════════════════
+    # Al abrir la app, en segundo plano: las que se finalizaron sin señal se
+    # suben solas en cuanto hay internet, sin depender de que el encuestador
+    # se acuerde. Solo actualiza los indicadores de la pantalla de inicio; no
+    # abre avisos, para no interferir con lo que se esté haciendo.
+    async def subir_pendientes():
+        try:
+            metas = await asyncio.to_thread(listar_sesiones)
+        except Exception:
+            return
+        for m in metas:
+            if m["registros"] == 0 or m["subida"] != PENDIENTE:
+                continue
+            # La que está abierta se sube al finalizarla.
+            if sesion[0] is not None and sesion[0].id == m["id"]:
+                continue
+            try:
+                s = await asyncio.to_thread(cargar, m["id"])
+                if s is None:
+                    continue
+                await asyncio.to_thread(sincronizar_sheets, s)
+            except Exception:
+                return      # sin señal: se reintenta la próxima vez que se abra
+            if m["id"] in insignias and sesion[0] is None:
+                insignias[m["id"]].controls = controles_insignia(SUBIDA)
+                page.update()
+
     mostrar_setup()
+    if sheets_configurado():
+        page.run_task(subir_pendientes)
+
+
+def controles_insignia(estado: str | None) -> list[ft.Control]:
+    """Indicador de si la sesión ya está en la planilla. Nada si no se sabe."""
+    if estado == SUBIDA:
+        icono, texto, color = ft.Icons.CLOUD_DONE, "En la planilla", T.ENTRADA
+    elif estado == PENDIENTE:
+        icono, texto, color = ft.Icons.CLOUD_UPLOAD, "Falta subir a la planilla", T.SALIDA
+    else:
+        return []
+    return [ft.Icon(icono, size=13, color=color),
+            ft.Text(texto, size=11, weight=ft.FontWeight.W_500, color=color)]
 
 
 if __name__ == "__main__":

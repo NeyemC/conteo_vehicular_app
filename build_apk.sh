@@ -14,7 +14,7 @@
 #               conteo_vehicular_release.jks  y  password.txt
 set -euo pipefail
 
-VERSION="1.2.0"                       # subir con cada cambio relevante
+VERSION="1.2.1"                       # subir con cada cambio relevante
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
 FLET="${FLET:-$HOME/.venvs/timer_aeropuerto/bin/flet}"

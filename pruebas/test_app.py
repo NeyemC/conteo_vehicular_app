@@ -35,6 +35,8 @@ class Contraste(unittest.TestCase):
         "sobre acento / salida":    (T.TEXTO_SOBRE_ACENTO, T.SALIDA),
         "sobre acento / error":     (T.TEXTO_SOBRE_ACENTO, T.ERROR),
         "error / fondo de error":   (T.ERROR, T.ERROR_FONDO),
+        "en la planilla / tarjeta": (T.ENTRADA, T.SUPERFICIE),
+        "falta subir / tarjeta":    (T.SALIDA, T.SUPERFICIE),
         "texto 2 / fondo de error": (T.TEXTO_2, T.ERROR_FONDO),
         "primario / su chip":       (T.PRIMARIO, T.con_alfa(T.PRIMARIO, 0.28)),
         **{f"ejes {g} / botón": (c, T.SUPERFICIE_2)
@@ -177,6 +179,77 @@ class Almacenamiento(unittest.TestCase):
         self.assertEqual(len(enviado["filas"]), 2)
         i = A.COLUMNAS_DETALLE.index("anulado")
         self.assertEqual({f[i] for f in enviado["filas"]}, {"Sí"})
+
+
+class EstadoSubida(unittest.TestCase):
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._parche = mock.patch.object(A, "CARPETA_DATOS", Path(self._tmp.name))
+        self._parche.start()
+        self.s = M.SesionConteo("CJC - Calama", "Ana", "4")
+        self.s.agregar_vehiculo("bus", "2", "Izquierda")
+
+    def tearDown(self):
+        self._parche.stop()
+        self._tmp.cleanup()
+
+    def _sincronizar(self, falla=None):
+        class Resp:
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def read(self): return b'{"nuevas": 1, "actualizadas": 0, "total": 1}'
+
+        def urlopen(req, timeout):
+            if falla:
+                raise falla
+            return Resp()
+
+        with mock.patch.object(A, "_GAS_URL", "https://ejemplo"), \
+             mock.patch("urllib.request.urlopen", urlopen):
+            A.sincronizar_sheets(self.s)
+
+    def _estado_listado(self):
+        [meta] = A.listar_sesiones()
+        return meta["subida"]
+
+    def test_sesion_anterior_a_la_marca_no_tiene_estado(self):
+        (A.ruta_sesion(self.s.id)).write_text(
+            json.dumps(self.s.to_dict()), encoding="utf-8")
+        self.assertIsNone(self._estado_listado())
+
+    def test_ciclo_pendiente_subida_pendiente(self):
+        A.guardar(self.s)
+        self.assertEqual(self._estado_listado(), A.PENDIENTE)
+        self._sincronizar()
+        self.assertEqual(self._estado_listado(), A.SUBIDA)
+        # Guardar de nuevo no borra la marca de lo ya subido.
+        A.guardar(self.s)
+        self.assertEqual(self._estado_listado(), A.SUBIDA)
+        # Un cambio posterior (registro o anulación) la deja pendiente otra vez.
+        self.s.deshacer()
+        A.guardar(self.s)
+        self.assertEqual(self._estado_listado(), A.PENDIENTE)
+
+    def test_envio_fallido_queda_pendiente(self):
+        import urllib.error
+        A.guardar(self.s)
+        with self.assertRaises(urllib.error.URLError):
+            self._sincronizar(urllib.error.URLError(OSError(7, "No address")))
+        self.assertEqual(self._estado_listado(), A.PENDIENTE)
+
+    def test_mensajes_de_error(self):
+        import socket
+        import urllib.error
+        sin_red = "Sin conexión a internet, o la señal es muy débil."
+        for ex in (urllib.error.URLError(socket.gaierror(7, "x")),
+                   TimeoutError("timed out"), socket.timeout()):
+            with self.subTest(ex=ex):
+                self.assertEqual(A.mensaje_error_sync(ex), sin_red)
+        http = urllib.error.HTTPError("u", 500, "x", None, None)
+        self.assertIn("HTTP 500", A.mensaje_error_sync(http))
+        self.assertEqual(A.mensaje_error_sync(RuntimeError("Token inválido")),
+                         "Token inválido")
 
 
 class Carpeta(unittest.TestCase):
